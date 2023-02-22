@@ -11,8 +11,8 @@ class BertSelfAttention(nn.Module):
   def __init__(self, config):
     super().__init__()
 
-    self.num_attention_heads = config.num_attention_heads
-    self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+    self.num_attention_heads = config.num_attention_heads #h
+    self.attention_head_size = int(config.hidden_size / config.num_attention_heads) #8
     self.all_head_size = self.num_attention_heads * self.attention_head_size
 
     # initialize the linear transformation layers for key, value, query
@@ -45,9 +45,21 @@ class BertSelfAttention(nn.Module):
     # normalize the scores
     # multiply the attention scores to the value and get back V'
     # next, we need to concat multi-heads and recover the original shape [bs, seq_len, num_attention_heads * attention_head_size = hidden_size]
+    
+    #shapes : (bs, num_attention_heads, seq_len, attention_head_size)
 
-    ### TODO
-    raise NotImplementedError
+    final_output = [] #(bs, num_attention_heads, seq_len, attention_head_size * num_attention_heads)
+    #producing scaled dot-product attention for each
+    for i in range(self.num_attention_heads):
+      qkT = query @ torch.transpose(key, (0, 1, 3, 2)) #(bs, num_attention_heads, seq_len, seq_len)
+      scaled_qkT = qkT / math.sqrt(key.shape[3]) #scaling QK^T by square root of d_k #(bs, num_attention_heads, seq_len, seq_len)
+      masked_res = torch.matmul(scaled_qkT, attention_mask) #attention:(bs, 1, 1, seq_len) #output = (bs, num_attention_heads, seq_len, seq_len)
+      softmax_res = torch.nn.functional.softmax(masked_res, dim=1) #(bs, num_attention_heads, seq_len, seq_len)
+      attention = torch.matmul(softmax_res, value) #(bs, num_attention_heads, seq_len, attention_head_size)
+      final_output.append(attention) #(bs, num_attention_heads, seq_len, attention_head_size)
+    final_output = torch.stack(final_output)
+    print("shape after conversion to tensor", final_output.shape)
+    return final_output #conversion to tensor!
 
 
   def forward(self, hidden_states, attention_mask):
@@ -93,8 +105,11 @@ class BertLayer(nn.Module):
     ln_layer: the layer norm to be applied
     """
     # Hint: Remember that BERT applies to the output of each sub-layer, before it is added to the sub-layer input and normalized 
-    ### TODO
-    raise NotImplementedError
+    res = dense_layer(output) #linear transformation of output of sublayer/attention scores
+    res = input + res #adding to the hidden states/previous states
+    res = ln_layer(res) #layer normalization
+    res = dropout(res) #applying dropout
+    return res
 
 
   def forward(self, hidden_states, attention_mask):
@@ -107,10 +122,20 @@ class BertLayer(nn.Module):
     3. a feed forward layer
     4. a add-norm that takes the input and output of the feed forward layer
     """
-    ### TODO
-    raise NotImplementedError
+    #Multihead attention layer
+    attn = self.self_attention.forward(hidden_states, attention_mask) #Multihead attention layer
 
+    #Add norm
+    res = self.add_norm(hidden_states, attn, self.attention_dense, self.attention_dropout, self.attention_layer_norm)
+    
+    #feed forward
+    ff = self.interm_dense(res) #applying first linear projection
+    ff = self.interm_af(res) #applying activation function (GeLU)
+    ff = self.interm_dense(res) #applying second linear projection
 
+    #add norm
+    res = self.add_norm(res, ff, self.out_dense, self.out_dropout, self.out_layer_norm)
+    return res
 
 class BertModel(BertPreTrainedModel):
   """
