@@ -11,8 +11,8 @@ class BertSelfAttention(nn.Module):
   def __init__(self, config):
     super().__init__()
 
-    self.num_attention_heads = config.num_attention_heads #h
-    self.attention_head_size = int(config.hidden_size / config.num_attention_heads) #8
+    self.num_attention_heads = config.num_attention_heads 
+    self.attention_head_size = int(config.hidden_size / config.num_attention_heads) 
     self.all_head_size = self.num_attention_heads * self.attention_head_size
 
     # initialize the linear transformation layers for key, value, query
@@ -46,20 +46,17 @@ class BertSelfAttention(nn.Module):
     # multiply the attention scores to the value and get back V'
     # next, we need to concat multi-heads and recover the original shape [bs, seq_len, num_attention_heads * attention_head_size = hidden_size]
     
-    #shapes : (bs, num_attention_heads, seq_len, attention_head_size)
-
-    final_output = [] #(bs, num_attention_heads, seq_len, attention_head_size * num_attention_heads)
-    #producing scaled dot-product attention for each
-    for i in range(self.num_attention_heads):
-      qkT = query @ torch.transpose(key, (0, 1, 3, 2)) #(bs, num_attention_heads, seq_len, seq_len)
-      scaled_qkT = qkT / math.sqrt(key.shape[3]) #scaling QK^T by square root of d_k #(bs, num_attention_heads, seq_len, seq_len)
-      masked_res = torch.matmul(scaled_qkT, attention_mask) #attention:(bs, 1, 1, seq_len) #output = (bs, num_attention_heads, seq_len, seq_len)
-      softmax_res = torch.nn.functional.softmax(masked_res, dim=1) #(bs, num_attention_heads, seq_len, seq_len)
-      attention = torch.matmul(softmax_res, value) #(bs, num_attention_heads, seq_len, attention_head_size)
-      final_output.append(attention) #(bs, num_attention_heads, seq_len, attention_head_size)
-    final_output = torch.stack(final_output)
-    print("shape after conversion to tensor", final_output.shape)
-    return final_output #conversion to tensor!
+    # IMPLEMENTED
+    _, num_heads, seq_len, dk = query.shape
+    S = query @ torch.transpose(key, 2,3)  #Q*V^T
+    scaled_S = S/math.sqrt(dk) # divide by sqrt(d_k)
+    attention_mask_tiled = torch.tile(attention_mask, (1, num_heads, seq_len,1)) 
+    masked_out = torch.matmul(scaled_S, attention_mask_tiled) #mask out pad tokens
+    softmax_res = torch.nn.functional.softmax(masked_out, dim=3) 
+    attention = softmax_res @ value #attention has shape(bs, num_heads, seq_len, attention_head_size)
+    attention = torch.transpose(attention, 1,2)
+    attention = torch.flatten(attention, start_dim=2, end_dim=3) #attention has shape (bs,seq_len, hidden_size)
+    return attention
 
 
   def forward(self, hidden_states, attention_mask):
@@ -105,6 +102,7 @@ class BertLayer(nn.Module):
     ln_layer: the layer norm to be applied
     """
     # Hint: Remember that BERT applies to the output of each sub-layer, before it is added to the sub-layer input and normalized 
+    # IMPLEMENTED
     res = dense_layer(output) #linear transformation of output of sublayer/attention scores
     res = input + res #adding to the hidden states/previous states
     res = ln_layer(res) #layer normalization
@@ -122,6 +120,7 @@ class BertLayer(nn.Module):
     3. a feed forward layer
     4. a add-norm that takes the input and output of the feed forward layer
     """
+    #IMPLEMENTED
     #Multihead attention layer
     attn = self.self_attention.forward(hidden_states, attention_mask) #Multihead attention layer
 
@@ -174,26 +173,25 @@ class BertModel(BertPreTrainedModel):
 
     # Get word embedding from self.word_embedding into input_embeds.
     inputs_embeds = None
-    ### TODO
-    raise NotImplementedError
-
+    ### IMPLEMENTED
+    input_embeds = self.word_embedding(input_ids)
 
     # Get position index and position embedding from self.pos_embedding into pos_embeds.
     pos_ids = self.position_ids[:, :seq_length]
 
     pos_embeds = None
-    ### TODO
-    raise NotImplementedError
-
+    ### IMPLEMENTED
+    pos_embeds = self.pos_embedding(pos_ids)
 
     # Get token type ids, since we are not consider token type, just a placeholder.
     tk_type_ids = torch.zeros(input_shape, dtype=torch.long, device=input_ids.device)
     tk_type_embeds = self.tk_type_embedding(tk_type_ids)
 
     # Add three embeddings together; then apply embed_layer_norm and dropout and return.
-    ### TODO
-    raise NotImplementedError
-
+    ### IMPLEMENTED
+    embeds = tk_type_embeds + pos_embeds + input_embeds
+    norm = self.embed_layer_norm(embeds)
+    return self.embed_dropout(norm)
 
   def encode(self, hidden_states, attention_mask):
     """
