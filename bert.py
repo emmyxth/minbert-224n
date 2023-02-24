@@ -50,8 +50,7 @@ class BertSelfAttention(nn.Module):
     _, num_heads, seq_len, dk = query.shape
     S = query @ torch.transpose(key, 2,3)  #Q*V^T
     scaled_S = S/math.sqrt(dk) # divide by sqrt(d_k)
-    attention_mask_tiled = torch.tile(attention_mask, (1, num_heads, seq_len,1)) 
-    masked_out = torch.matmul(scaled_S, attention_mask_tiled) #mask out pad tokens
+    masked_out = scaled_S.masked_fill_(attention_mask.bool(), -float('inf'))
     softmax_res = torch.nn.functional.softmax(masked_out, dim=3) 
     attention = softmax_res @ value #attention has shape(bs, num_heads, seq_len, attention_head_size)
     attention = torch.transpose(attention, 1,2)
@@ -104,9 +103,9 @@ class BertLayer(nn.Module):
     # Hint: Remember that BERT applies to the output of each sub-layer, before it is added to the sub-layer input and normalized 
     # IMPLEMENTED
     res = dense_layer(output) #linear transformation of output of sublayer/attention scores
+    res = dropout(res) #applying dropout
     res = input + res #adding to the hidden states/previous states
     res = ln_layer(res) #layer normalization
-    res = dropout(res) #applying dropout
     return res
 
 
@@ -129,8 +128,7 @@ class BertLayer(nn.Module):
     
     #feed forward
     ff = self.interm_dense(res) #applying first linear projection
-    ff = self.interm_af(res) #applying activation function (GeLU)
-    ff = self.interm_dense(res) #applying second linear projection
+    ff = self.interm_af(ff) #applying activation function (GeLU)
 
     #add norm
     res = self.add_norm(res, ff, self.out_dense, self.out_dropout, self.out_layer_norm)

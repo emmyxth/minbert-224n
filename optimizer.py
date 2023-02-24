@@ -58,8 +58,21 @@ class AdamW(Optimizer):
                 # 4- After that main gradient-based update, update again using weight decay
                 #    (incorporating the learning rate again).
 
-                ### TODO
-                raise NotImplementedError
+                ### IMPLEMENTED
+                if "t" not in state.keys():
+                    state["t"] = 0
+                    state["mt"] = torch.zeros(p.data.shape)
+                    state["vt"] = torch.zeros(p.data.shape)
+                t = state["t"]
+                beta1 = group["betas"][0]
+                beta2 = group["betas"][1]
+                lr = group["lr"]
+                state["t"] = t + 1
+                state["mt"] = beta1*state["mt"] + (1-beta1)*grad
+                state["vt"] = beta2*state["vt"] + (1-beta2)*(torch.mul(grad,grad))
+                state["alphat"] = (lr * math.sqrt(1-beta2**state["t"]))/(1-beta1**state["t"])
+                p.data = p.data - (state["alphat"]*state["mt"]/(torch.sqrt(state["vt"]) + group["eps"]))
+                p.data = p.data - lr * group["weight_decay"] * p.data
 
 
         return loss
