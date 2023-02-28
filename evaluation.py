@@ -2,11 +2,9 @@
 
 '''
 Model evaluation functions.
-
 When training your multitask model, you will find it useful to run
 model_eval_multitask to be able to evaluate your model on the 3 tasks in the
 development set.
-
 Before submission, your code needs to call test_model_multitask(args, model, device) to generate
 your predictions. We'll evaluate these predictions against our labels on our end,
 which is how the leaderboard will be updated.
