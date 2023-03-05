@@ -16,7 +16,7 @@ from datasets import SentenceClassificationDataset, SentencePairDataset, \
 from evaluation import model_eval_sst, test_model_multitask, model_eval_multitask
 
 
-TQDM_DISABLE=True
+TQDM_DISABLE=False
 
 # fix the random seed
 def seed_everything(seed=11711):
@@ -203,11 +203,12 @@ def train_multitask(args):
 
             train_loss += loss.item()
             num_batches += 1
+        print(f"Epoch {epoch}: finished training on sst dataset")
 
-    ##################
         train_loss = 0
         num_batches = 0
         for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            print(f"Epoch {epoch}: batch{num_batches}")
             (b_ids1, b_mask1,
              b_ids2, b_mask2,
              b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
@@ -223,13 +224,14 @@ def train_multitask(args):
             optimizer.zero_grad()
             logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
             loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
-            # loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
             
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item()
             num_batches += 1
+
+        print(f"Epoch {epoch}: finished training on para dataset")
 
         train_loss = 0
         num_batches = 0
@@ -248,7 +250,6 @@ def train_multitask(args):
 
             optimizer.zero_grad()
             logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
-            # loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
             loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
 
             loss.backward()
@@ -256,7 +257,8 @@ def train_multitask(args):
 
             train_loss += loss.item()
             num_batches += 1
-        ###################
+        print(f"Epoch {epoch}: finished training on sts dataset")
+
 
         train_loss = train_loss / (num_batches)
 
