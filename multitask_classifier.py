@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
+from pcgrad import PCGrad
 
 from datasets import SentenceClassificationDataset, SentencePairDataset, \
     load_multitask_data, load_multitask_test_data
@@ -179,95 +180,93 @@ def train_multitask(args):
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
+    optimizer = PCGrad(optimizer) 
+
+
     best_dev_acc = 0
 
+    max_batch = max(len(sst_train_dataloader), len(sts_train_dataloader), len(para_train_dataloader))
     # Run for the specified number of epochs
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
         num_batches = 0
-        for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            b_ids, b_mask, b_labels = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'])
+        	
+        sst_it=iter(sst_train_dataloader)
+        para_it=iter(para_train_dataloader)
+        sts_it=iter(sts_train_dataloader)
 
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            b_labels = b_labels.to(device)
+        # for i in tqdm(range(max_batch), desc=f'train-{epoch}', disable=TQDM_DISABLE):
+        while num_batches < max_batch:
+            loss1, loss2, loss3 = None, None, None
+            if num_batches < len(sst_dev_dataloader):
+                batch = next(sst_it)
+                b_ids, b_mask, b_labels = (batch['token_ids'],
+                                        batch['attention_mask'], batch['labels'])
 
-            optimizer.zero_grad()
-            logits = model.predict_sentiment(b_ids, b_mask)
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+                b_ids = b_ids.to(device)
+                b_mask = b_mask.to(device)
+                b_labels = b_labels.to(device)
 
-            loss.backward()
-            optimizer.step()
+                logits = model.predict_sentiment(b_ids, b_mask)
+                loss1 = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+                train_loss += loss1.item()
+            if num_batches < len(para_train_dataloader):
+                batch = next(para_it)
+                (b_ids1, b_mask1,
+                b_ids2, b_mask2,
+                b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
+                            batch['token_ids_2'], batch['attention_mask_2'],
+                            batch['labels'], batch['sent_ids'])
 
-            train_loss += loss.item()
-            num_batches += 1
-        print(f"Epoch {epoch}: finished training on sst dataset")
+                b_ids1 = b_ids1.to(device)
+                b_mask1 = b_mask1.to(device)
+                b_ids2 = b_ids2.to(device)
+                b_mask2 = b_mask2.to(device)
+                b_labels = b_labels.to(device)
 
-        train_loss = 0
-        num_batches = 0
-        for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            print(f"Epoch {epoch}: batch{num_batches}")
-            (b_ids1, b_mask1,
-             b_ids2, b_mask2,
-             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
-                          batch['token_ids_2'], batch['attention_mask_2'],
-                          batch['labels'], batch['sent_ids'])
+                logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
+                loss2 = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+                train_loss += loss2.item()
+                
+            if num_batches < len(sts_dev_dataloader):
+                batch = next(sts_it)
+                (b_ids1, b_mask1,
+                b_ids2, b_mask2,
+                b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
+                            batch['token_ids_2'], batch['attention_mask_2'],
+                            batch['labels'], batch['sent_ids'])
 
-            b_ids1 = b_ids1.to(device)
-            b_mask1 = b_mask1.to(device)
-            b_ids2 = b_ids2.to(device)
-            b_mask2 = b_mask2.to(device)
-            b_labels = b_labels.to(device)
+                b_ids1 = b_ids1.to(device)
+                b_mask1 = b_mask1.to(device)
+                b_ids2 = b_ids2.to(device)
+                b_mask2 = b_mask2.to(device)
+                b_labels = b_labels.to(device)
 
-            optimizer.zero_grad()
-            logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
-            loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
-            
-            loss.backward()
-            optimizer.step()
-
-            train_loss += loss.item()
-            num_batches += 1
-
-        print(f"Epoch {epoch}: finished training on para dataset")
-
-        train_loss = 0
-        num_batches = 0
-        for batch in tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            (b_ids1, b_mask1,
-             b_ids2, b_mask2,
-             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
-                          batch['token_ids_2'], batch['attention_mask_2'],
-                          batch['labels'], batch['sent_ids'])
-
-            b_ids1 = b_ids1.to(device)
-            b_mask1 = b_mask1.to(device)
-            b_ids2 = b_ids2.to(device)
-            b_mask2 = b_mask2.to(device)
-            b_labels = b_labels.to(device)
+                logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
+                loss3 = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+                train_loss += loss3.item()
 
             optimizer.zero_grad()
-            logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
-            loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+            losses += [loss1] if loss1 is not None else []
+            losses += [loss2] if loss2 is not None else []
+            losses += [loss3] if loss3 is not None else []
+            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
+            optimizer.step()  # apply gradient step
 
-            loss.backward()
-            optimizer.step()
-
-            train_loss += loss.item()
             num_batches += 1
-        print(f"Epoch {epoch}: finished training on sts dataset")
+            if num_batches % 100 == 0:
+                print(f"Epoch {epoch}: batch_num:: {num_batches}")
 
 
         train_loss = train_loss / (num_batches)
 
-        # train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
-        # dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
 
-        train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
-        dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
+        para_train_acc,_, _, sentiment_train_acc, _, _, sts_train_corr, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        para_dev_acc,_, _, sentiment_dev_acc, _, _, sts_dev_corr, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
 
+        train_acc = para_train_acc + sentiment_train_acc + sts_train_corr
+        dev_acc = para_dev_acc + sentiment_dev_acc + sts_dev_corr
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
             save_model(model, optimizer, args, config, args.filepath)
