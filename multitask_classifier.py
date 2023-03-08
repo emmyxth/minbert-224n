@@ -10,11 +10,11 @@ from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
 
-from datasets import SentenceClassificationDataset, SentencePairDataset, \
-    load_multitask_data, load_multitask_test_data
+from datasets import SentenceClassificationDataset, SentencePairDataset, SingleLineDataset, \
+    load_multitask_data, load_pretrain_data
+from tokenizer import BertTokenizer
 
 from evaluation import model_eval_sst, test_model_multitask, model_eval_multitask
-
 
 TQDM_DISABLE=False
 
@@ -31,7 +31,7 @@ def seed_everything(seed=11711):
 
 BERT_HIDDEN_SIZE = 768
 N_SENTIMENT_CLASSES = 5
-
+BERT_VOCAB_SIZE = 30522
 
 class MultitaskBERT(nn.Module):
     '''
@@ -52,12 +52,14 @@ class MultitaskBERT(nn.Module):
             elif config.option == 'finetune':
                 param.requires_grad = True
         ### IMPLEMENTED
-        self.sentiment_linear = torch.nn.Linear(config.hidden_size, 5)
+        self.sentiment_linear = torch.nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
         self.sentiment_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
-        self.paraphrase_linear = torch.nn.Linear(config.hidden_size * 2, 1)
+        self.paraphrase_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
         self.paraphrase_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
-        self.similarity_linear = torch.nn.Linear(config.hidden_size * 2, 1)
+        self.similarity_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
         self.similarity_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+        self.pretrain_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+        self.pretrain_linear = torch.nn.Linear(BERT_HIDDEN_SIZE, BERT_VOCAB_SIZE) 
 
 
     def forward(self, input_ids, attention_mask):
@@ -68,8 +70,6 @@ class MultitaskBERT(nn.Module):
         # (e.g., by adding other layers).
         ### IMPLEMENTED
         return self.bert(input_ids, attention_mask)['pooler_output'] # this has cls token hidden state
-    
-
 
     def predict_sentiment(self, input_ids, attention_mask):
         '''Given a batch of sentences, outputs logits for classifying sentiment.
@@ -81,7 +81,6 @@ class MultitaskBERT(nn.Module):
         res = self.bert(input_ids, attention_mask)['pooler_output'] # this has cls token hidden state
         res = self.sentiment_dropout(res)
         return self.sentiment_linear(res)
-
 
     def predict_paraphrase(self,
                            input_ids_1, attention_mask_1,
@@ -112,9 +111,11 @@ class MultitaskBERT(nn.Module):
         res2 = self.similarity_dropout(res2)
         res = torch.cat((res1,res2),-1)
         return self.similarity_linear(res)
-
-
-
+    
+    def predict_domain_data(self, input_ids, attention_mask):
+        res = self.bert(input_ids, attention_mask)['last_hidden_state'] # this has cls token hidden state
+        res = self.pretrain_dropout(res)
+        return self.pretrain_linear(res)
 
 def save_model(model, optimizer, args, config, filepath):
     save_info = {
@@ -136,6 +137,7 @@ def train_multitask(args):
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
     # Load data
     # Create the data and its corresponding datasets and dataloader
+
     sst_train_data, num_labels,para_train_data, sts_train_data = load_multitask_data(args.sst_train,args.para_train,args.sts_train, split ='train')
     sst_dev_data, num_labels,para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev,args.para_dev,args.sts_dev, split ='train')
 
@@ -166,6 +168,8 @@ def train_multitask(args):
     ###################################
 
     # Init model
+    saved = torch.load(args.pretrained_weights_path)
+
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
               'num_labels': num_labels,
               'hidden_size': 768,
@@ -176,6 +180,7 @@ def train_multitask(args):
 
     model = MultitaskBERT(config)
     model = model.to(device)
+    model.load_state_dict(saved['model'])
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -289,6 +294,60 @@ def test_model(args):
 
         test_model_multitask(args, model, device)
 
+def pretrain_on_domain_data(args):
+    assert(args.pretrained_weights_path)
+    device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+    # Load data
+    # Create the data and its corresponding datasets and dataloader
+    train_data = load_pretrain_data(args.sst_train,args.para_train,args.sts_train)
+
+    pretrain_data = SingleLineDataset(train_data, args)
+    pretrain_data_dataloader = DataLoader(pretrain_data, shuffle=True, batch_size=args.batch_size,
+                                        collate_fn=pretrain_data.collate_fn)
+
+    # Init model
+    config = {'hidden_dropout_prob': args.hidden_dropout_prob,
+              'hidden_size': 768,
+              'data_dir': '.',
+              'option': args.option}
+
+    config = SimpleNamespace(**config)
+
+    model = MultitaskBERT(config)
+    model = model.to(device)
+
+    lr = args.lr
+    optimizer = AdamW(model.parameters(), lr=lr)
+
+    for epoch in range(args.epochs):
+        model.train()
+        train_loss = 0
+        num_batches = 0
+        for batch in tqdm(pretrain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
+                                       batch['attention_mask'], batch['labels'], batch['chosen'])
+            
+            b_chosen = b_chosen.to(device)
+            b_ids = b_ids.to(device)
+            b_mask = b_mask.to(device)
+            b_labels = b_labels.to(device)
+
+            optimizer.zero_grad()
+            logits = model.predict_domain_data(b_ids, b_mask)
+            logits = logits[b_chosen[:,0], b_chosen[:,1]]
+            b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
+            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+            num_batches += 1
+
+        train_loss = train_loss / (num_batches)
+        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}")
+        save_model(model, optimizer, args, config, args.pretrained_weights_path + args.filepath)
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -320,6 +379,7 @@ def get_args():
     parser.add_argument("--sts_dev_out", type=str, default="predictions/sts-dev-output.csv")
     parser.add_argument("--sts_test_out", type=str, default="predictions/sts-test-output.csv")
 
+    parser.add_argument("--pretrained_weights_path", type=str)
     # hyper parameters
     parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.3)
@@ -333,5 +393,8 @@ if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.option}-{args.epochs}-{args.lr}-multitask.pt' # save path
     seed_everything(args.seed)  # fix the seed for reproducibility
-    train_multitask(args)
-    test_model(args)
+    if args.pretrained_weights_path:
+        pretrain_on_domain_data(args)
+    else:
+        train_multitask(args)
+        test_model(args)

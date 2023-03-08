@@ -13,6 +13,8 @@ import csv
 import torch
 from torch.utils.data import Dataset
 from tokenizer import BertTokenizer
+import random
+import numpy as np
 
 
 def preprocess_string(s):
@@ -23,6 +25,67 @@ def preprocess_string(s):
                     .replace('\'', ' \'')
                     .split())
 
+class SingleLineDataset(Dataset):
+    def __init__(self, dataset, args):
+        self.dataset = dataset
+        self.p = args
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.dataset[idx]
+
+    def pad_data(self, data):
+        encoding = self.tokenizer(data, return_tensors='pt', padding=True, truncation=True)
+        labels = torch.LongTensor(encoding['input_ids'])
+        attention_mask = torch.LongTensor(encoding['attention_mask'])
+
+        # 15% of the token positions at random for prediction
+        batch_size, _ = encoding["input_ids"].shape
+        token_ids = []
+        # batch and token
+        indicies = np.random.randint(0, len(labels[0]), size=(batch_size, int(len(labels[0])*.15)))
+        for batch in range(len(indicies)):
+            token_ids.append([])
+            for i in range(len(labels[batch])):
+                if i not in indicies[batch]:
+                    token_ids[batch].append(labels[batch][i])
+                else:
+                    num = random.randint(1,10)
+                    if num <=8:
+                        # then in 80% of these cases the token is replaced [MASK],
+                        token_ids[batch].append(self.tokenizer.mask_token_id)
+                    elif num <= 9:
+                        # in 10% of cases the token is replaced with a random token, 
+                        token_ids[batch].append(np.random. randint(0, 30522))
+                    else:
+                        # and in another 10% of cases, the token will remain unchanged.
+                        token_ids[batch].append(labels[batch][i])
+       
+        token_ids = torch.LongTensor(token_ids)
+        token_ids = torch.reshape(token_ids, (batch_size,-1))
+        chosen = []
+        for i in range(len(indicies)):
+            for val in indicies[i]:
+                chosen.append([i, val])
+        chosen = torch.LongTensor(chosen)
+
+        return labels, token_ids, attention_mask, data, chosen
+    def collate_fn(self, all_data):
+        labels, token_ids, attention_mask, sents, chosen = self.pad_data(all_data)
+
+        #add in label array for original tokens that were masked out
+        batched_data = {
+                'labels' : labels,
+                'token_ids': token_ids, #15 percent are masked , etc. 
+                'attention_mask': attention_mask,
+                'sents': sents,
+                'chosen': chosen
+            }
+
+        return batched_data
 
 class SentenceClassificationDataset(Dataset):
     def __init__(self, dataset, args):
@@ -244,6 +307,41 @@ def load_multitask_test_data():
     return sentiment_data, paraphrase_data, similarity_data
 
 
+def load_pretrain_data(sentiment_filename,paraphrase_filename,similarity_filename):
+    sentiment_data = []
+    num_labels = {}
+    with open(sentiment_filename, 'r') as fp:
+        for record in csv.DictReader(fp,delimiter = '\t'):
+            sent = record['sentence'].lower().strip()
+            sent_id = record['id'].lower().strip()
+            label = int(record['sentiment'].strip())
+            if label not in num_labels:
+                num_labels[label] = len(num_labels)
+            sentiment_data.append(sent)
+
+    print(f"Loaded {len(sentiment_data)} train examples from {sentiment_filename}")
+
+    paraphrase_data = []
+    with open(paraphrase_filename, 'r') as fp:
+        for record in csv.DictReader(fp,delimiter = '\t'):
+            try:
+                paraphrase_data.append(preprocess_string(record['sentence1']))
+                paraphrase_data.append(preprocess_string(record['sentence2']))
+                                    
+            except:
+                pass
+
+    print(f"Loaded {len(paraphrase_data)} train examples from {paraphrase_filename}")
+
+    similarity_data = []
+    with open(similarity_filename, 'r') as fp:
+        for record in csv.DictReader(fp,delimiter = '\t'):
+            similarity_data.append(preprocess_string(record['sentence1']))
+            similarity_data.append(preprocess_string(record['sentence2']))
+
+    print(f"Loaded {len(similarity_data)} train examples from {similarity_filename}")
+
+    return sentiment_data + paraphrase_data + similarity_data
 
 def load_multitask_data(sentiment_filename,paraphrase_filename,similarity_filename,split='train'):
     sentiment_data = []
