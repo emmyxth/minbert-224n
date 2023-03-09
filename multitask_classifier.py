@@ -346,7 +346,7 @@ def pretrain_on_domain_data(args):
 
         train_loss = train_loss / (num_batches)
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}")
-        save_model(model, optimizer, args, config, args.pretrained_weights_path + args.filepath)
+        save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
 
 
 def get_args():
@@ -393,7 +393,7 @@ if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.option}-{args.epochs}-{args.lr}-multitask.pt' # save path
     seed_everything(args.seed)  # fix the seed for reproducibility
-    if args.pretrained_weights_path:
+    if args.pretrained_weights_path and args.option == "finetune":
         pretrain_on_domain_data(args)
     else:
         train_multitask(args)
