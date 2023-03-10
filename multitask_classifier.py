@@ -52,12 +52,21 @@ class MultitaskBERT(nn.Module):
             elif config.option == 'finetune':
                 param.requires_grad = True
         ### IMPLEMENTED
-        self.sentiment_linear = torch.nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
+        self.sentiment_linear = torch.nn.Linear(BERT_HIDDEN_SIZE, BERT_HIDDEN_SIZE//2)
+        self.sentiment_relu = torch.nn.ReLU()
+        self.sentiment_linear2 = torch.nn.Linear(BERT_HIDDEN_SIZE//2, N_SENTIMENT_CLASSES)
         self.sentiment_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
-        self.paraphrase_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+
+        self.paraphrase_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
+        self.paraphrase_relu = torch.nn.ReLU()
+        self.paraphrase_linear2 = torch.nn.Linear(BERT_HIDDEN_SIZE, 1)
         self.paraphrase_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
-        self.similarity_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+
+        self.similarity_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
+        self.similarity_relu = torch.nn.ReLU()
+        self.similarity_linear2 = torch.nn.Linear(BERT_HIDDEN_SIZE, 1)
         self.similarity_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+
         self.pretrain_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
         self.pretrain_linear = torch.nn.Linear(BERT_HIDDEN_SIZE, BERT_VOCAB_SIZE) 
 
@@ -80,7 +89,9 @@ class MultitaskBERT(nn.Module):
         ### IMPLEMENTED
         res = self.bert(input_ids, attention_mask)['pooler_output'] # this has cls token hidden state
         res = self.sentiment_dropout(res)
-        return self.sentiment_linear(res)
+        res = self.sentiment_linear(res)
+        res = self.sentiment_relu(res)
+        return self.sentiment_linear2(res)
 
     def predict_paraphrase(self,
                            input_ids_1, attention_mask_1,
@@ -95,7 +106,9 @@ class MultitaskBERT(nn.Module):
         res1 = self.paraphrase_dropout(res1)
         res2 = self.paraphrase_dropout(res2)
         res = torch.cat((res1,res2),-1)
-        return self.paraphrase_linear(res)
+        res = self.paraphrase_linear(res)
+        res = self.paraphrase_relu(res)
+        return self.paraphrase_linear2(res)
 
     def predict_similarity(self,
                            input_ids_1, attention_mask_1,
@@ -110,7 +123,9 @@ class MultitaskBERT(nn.Module):
         res1 = self.similarity_dropout(res1)
         res2 = self.similarity_dropout(res2)
         res = torch.cat((res1,res2),-1)
-        return self.similarity_linear(res)
+        res = self.similarity_linear(res)
+        res = self.similarity_relu(res)
+        return self.similarity_linear2(res)
     
     def predict_domain_data(self, input_ids, attention_mask):
         res = self.bert(input_ids, attention_mask)['last_hidden_state'] # this has cls token hidden state
@@ -168,8 +183,6 @@ def train_multitask(args):
     ###################################
 
     # Init model
-    saved = torch.load(args.pretrained_weights_path)
-
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
               'num_labels': num_labels,
               'hidden_size': 768,
@@ -180,7 +193,10 @@ def train_multitask(args):
 
     model = MultitaskBERT(config)
     model = model.to(device)
-    model.load_state_dict(saved['model'])
+
+    if args.pretrained_weights_path:
+        saved = torch.load(args.pretrained_weights_path)
+        model.load_state_dict(saved['model'])
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -213,7 +229,6 @@ def train_multitask(args):
         train_loss = 0
         num_batches = 0
         for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            print(f"Epoch {epoch}: batch{num_batches}")
             (b_ids1, b_mask1,
              b_ids2, b_mask2,
              b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
