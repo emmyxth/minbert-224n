@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import classification_report, f1_score, recall_score, accuracy_score
+from torch.optim import NAdam
 
 # change it with respect to the original model
 from tokenizer import BertTokenizer
@@ -257,7 +258,8 @@ def train(args):
     model = model.to(device)
 
     lr = args.lr
-    optimizer = AdamW(model.parameters(), lr=lr)
+    #optimizer = AdamW(model.parameters(), lr=lr)
+    optimizer = NAdam(model.parameters(), lr=lr)
     best_dev_acc = 0
 
     # Run for the specified number of epochs
