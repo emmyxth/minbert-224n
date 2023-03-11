@@ -333,9 +333,15 @@ def pretrain_on_domain_data(args):
             b_labels = b_labels.to(device)
 
             optimizer.zero_grad()
+            # print("token id shape", b_ids.shape)
             logits = model.predict_domain_data(b_ids, b_mask)
+            # print("logits.shape before", logits.shape)
+            # print("b_labels.shape before", b_labels)
+            # print("chosen.shape", b_chosen)
             logits = logits[b_chosen[:,0], b_chosen[:,1]]
             b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
+            # print("logits.shape after", logits.shape)
+            # print("b_labels.shape after", b_labels)
             loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
             loss.backward()
