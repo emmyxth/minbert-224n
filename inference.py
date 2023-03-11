@@ -84,7 +84,7 @@ class InferenceDataset(Dataset):
     def collate_fn(self, all_data):
         (token_ids1, token_type_ids1, attention_mask1,
                 token_ids2, token_type_ids2, attention_mask2,
-                labels,sent_ids) = self.pad_data(self.dataset)
+                labels,sent_ids) = self.pad_data(all_data)
 
         batched_data = {
                 'token_ids_1': token_ids1,
