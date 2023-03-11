@@ -15,6 +15,7 @@ from torch.utils.data import Dataset
 from tokenizer import BertTokenizer
 import random
 import numpy as np
+import sys
 
 
 def preprocess_string(s):
@@ -42,34 +43,54 @@ class SingleLineDataset(Dataset):
         labels = torch.LongTensor(encoding['input_ids'])
         attention_mask = torch.LongTensor(encoding['attention_mask'])
 
+        #make sure the random index chosen is not where the attention mask is -1000 or cls
         # 15% of the token positions at random for prediction
         batch_size, _ = encoding["input_ids"].shape
         token_ids = []
+        chosen = []
         # batch and token
-        indicies = np.random.randint(0, len(labels[0]), size=(batch_size, int(len(labels[0])*.15)))
-        for batch in range(len(indicies)):
+        # indicies = np.random.randint(0, len(labels[0]), size=(batch_size, int(len(labels[0])*.15)))
+        # print("batch_size", batch_size)
+        
+        for sent_id in range(batch_size):
             token_ids.append([])
-            for i in range(len(labels[batch])):
-                if i not in indicies[batch]:
-                    token_ids[batch].append(labels[batch][i])
+            #don't choose the CLS to pad token/end of sequence then randomly choose 15 percent
+            #find end of sequence from attention mask
+            # print(sent_id)
+            # print("---------------------------------------------------------------------------")
+            # print("attention_mask", attention_mask[sent_id])
+            # print("labels", labels[sent_id])
+            endOfSequence = (attention_mask[sent_id] == 0).nonzero()
+            # print("sequence size", endOfSequence.shape)
+            # print("sequence size equal ", endOfSequence.shape[0] >= 1)
+            endOfSequence = int(endOfSequence[0]) if endOfSequence.shape[0] >= 1 else len(labels[sent_id]) 
+            # indicies = np.random.randint(1, endOfSequence, size=int((endOfSequence -1)*.15))
+            indicies = random.sample(range(1, endOfSequence), int((endOfSequence-1)*.15))
+            # print("indicies", indicies)
+            for i in range(len(labels[sent_id])):
+                if i not in indicies:
+                    token_ids[sent_id].append(int(labels[sent_id][i]))
                 else:
                     num = random.randint(1,10)
                     if num <=8:
                         # then in 80% of these cases the token is replaced [MASK],
-                        token_ids[batch].append(self.tokenizer.mask_token_id)
+                        token_ids[sent_id].append(self.tokenizer.mask_token_id)
                     elif num <= 9:
                         # in 10% of cases the token is replaced with a random token, 
-                        token_ids[batch].append(np.random. randint(0, 30522))
+                        token_ids[sent_id].append(np.random. randint(0, 30521))
                     else:
                         # and in another 10% of cases, the token will remain unchanged.
-                        token_ids[batch].append(labels[batch][i])
-       
+                        token_ids[sent_id].append(labels[sent_id][i])
+            # print("maskedid", self.tokenizer.mask_token_id)
+            # print("clsid", self.tokenizer.cls_token_id)
+            # print("tokenid", token_ids[sent_id])
+            for val in indicies:
+                chosen.append([sent_id, val])
+            # print("chosen", chosen)
+            # print("---------------------------------------------------------------------------")
+            
         token_ids = torch.LongTensor(token_ids)
         token_ids = torch.reshape(token_ids, (batch_size,-1))
-        chosen = []
-        for i in range(len(indicies)):
-            for val in indicies[i]:
-                chosen.append([i, val])
         chosen = torch.LongTensor(chosen)
 
         return labels, token_ids, attention_mask, data, chosen
