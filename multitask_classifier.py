@@ -267,9 +267,6 @@ def train_multitask(args):
 
         train_loss = train_loss / (num_batches)
 
-        # train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
-        # dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
-
         train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
         dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
 
