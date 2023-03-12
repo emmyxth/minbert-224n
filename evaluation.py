@@ -79,17 +79,19 @@ def model_eval_multitask(sentiment_dataloader,
             b_mask1 = b_mask1.to(device)
             b_ids2 = b_ids2.to(device)
             b_mask2 = b_mask2.to(device)
+            
 
             logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
+            
             y_hat = logits.sigmoid().round().flatten().cpu().numpy()
             b_labels = b_labels.flatten().cpu().numpy()
 
             para_y_pred.extend(y_hat)
             para_y_true.extend(b_labels)
             para_sent_ids.extend(b_sent_ids)
-
+        
         paraphrase_accuracy = np.mean(np.array(para_y_pred) == np.array(para_y_true))
-
+        print(f"Paraphrase Accuracy: {paraphrase_accuracy}")
         sts_y_true = []
         sts_y_pred = []
         sts_sent_ids = []
@@ -117,7 +119,7 @@ def model_eval_multitask(sentiment_dataloader,
             sts_sent_ids.extend(b_sent_ids)
         pearson_mat = np.corrcoef(sts_y_pred,sts_y_true)
         sts_corr = pearson_mat[1][0]
-
+        print(f"Similarity Corr: {sts_corr}")
 
         sst_y_true = []
         sst_y_pred = []
@@ -139,6 +141,7 @@ def model_eval_multitask(sentiment_dataloader,
             sst_sent_ids.extend(b_sent_ids)
 
         sentiment_accuracy = np.mean(np.array(sst_y_pred) == np.array(sst_y_true))
+        print(f"Sentiment Accuracy: {sentiment_accuracy}")
 
         print(f'Paraphrase detection accuracy: {paraphrase_accuracy:.3f}')
         print(f'Sentiment classification accuracy: {sentiment_accuracy:.3f}')
