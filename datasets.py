@@ -15,7 +15,6 @@ from torch.utils.data import Dataset
 from tokenizer import BertTokenizer
 import random
 import numpy as np
-import sys
 
 
 def preprocess_string(s):
@@ -43,29 +42,22 @@ class SingleLineDataset(Dataset):
         labels = torch.LongTensor(encoding['input_ids'])
         attention_mask = torch.LongTensor(encoding['attention_mask'])
 
-        #make sure the random index chosen is not where the attention mask is -1000 or cls
         # 15% of the token positions at random for prediction
         batch_size, _ = encoding["input_ids"].shape
         token_ids = []
         chosen = []
-        # batch and token
-        # indicies = np.random.randint(0, len(labels[0]), size=(batch_size, int(len(labels[0])*.15)))
-        # print("batch_size", batch_size)
         
         for sent_id in range(batch_size):
             token_ids.append([])
-            #don't choose the CLS to pad token/end of sequence then randomly choose 15 percent
-            #find end of sequence from attention mask
             # print(sent_id)
             # print("---------------------------------------------------------------------------")
             # print("attention_mask", attention_mask[sent_id])
             # print("labels", labels[sent_id])
-            endOfSequence = (attention_mask[sent_id] == 0).nonzero()
-            # print("sequence size", endOfSequence.shape)
-            # print("sequence size equal ", endOfSequence.shape[0] >= 1)
-            endOfSequence = int(endOfSequence[0]) if endOfSequence.shape[0] >= 1 else len(labels[sent_id]) 
-            # indicies = np.random.randint(1, endOfSequence, size=int((endOfSequence -1)*.15))
-            indicies = random.sample(range(1, endOfSequence), int((endOfSequence-1)*.15))
+            endOfSequence = int((labels[sent_id] == self.tokenizer.sep_token_id).nonzero())
+            # print("sequence size", endOfSequence)
+            # print("sequence size equal ", endOfSequence.shape[1] >= 1)
+            # endOfSequence = int(endOfSequence) if endOfSequence.shape[1] >= 1 else len(labels[sent_id]) 
+            indicies = random.sample(range(1, endOfSequence), round((endOfSequence-1)*.15))
             # print("indicies", indicies)
             for i in range(len(labels[sent_id])):
                 if i not in indicies:
@@ -83,6 +75,7 @@ class SingleLineDataset(Dataset):
                         token_ids[sent_id].append(labels[sent_id][i])
             # print("maskedid", self.tokenizer.mask_token_id)
             # print("clsid", self.tokenizer.cls_token_id)
+            # print("separateid", self.tokenizer.sep_token_id)
             # print("tokenid", token_ids[sent_id])
             for val in indicies:
                 chosen.append([sent_id, val])
@@ -334,10 +327,6 @@ def load_pretrain_data(sentiment_filename,paraphrase_filename,similarity_filenam
     with open(sentiment_filename, 'r') as fp:
         for record in csv.DictReader(fp,delimiter = '\t'):
             sent = record['sentence'].lower().strip()
-            sent_id = record['id'].lower().strip()
-            label = int(record['sentiment'].strip())
-            if label not in num_labels:
-                num_labels[label] = len(num_labels)
             sentiment_data.append(sent)
 
     print(f"Loaded {len(sentiment_data)} train examples from {sentiment_filename}")
@@ -345,12 +334,8 @@ def load_pretrain_data(sentiment_filename,paraphrase_filename,similarity_filenam
     paraphrase_data = []
     with open(paraphrase_filename, 'r') as fp:
         for record in csv.DictReader(fp,delimiter = '\t'):
-            try:
-                paraphrase_data.append(preprocess_string(record['sentence1']))
-                paraphrase_data.append(preprocess_string(record['sentence2']))
-                                    
-            except:
-                pass
+            paraphrase_data.append(preprocess_string(record['sentence1']))
+            paraphrase_data.append(preprocess_string(record['sentence2']))
 
     print(f"Loaded {len(paraphrase_data)} train examples from {paraphrase_filename}")
 
