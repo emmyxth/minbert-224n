@@ -49,16 +49,8 @@ class SingleLineDataset(Dataset):
         
         for sent_id in range(batch_size):
             token_ids.append([])
-            # print(sent_id)
-            # print("---------------------------------------------------------------------------")
-            # print("attention_mask", attention_mask[sent_id])
-            # print("labels", labels[sent_id])
             endOfSequence = int((labels[sent_id] == self.tokenizer.sep_token_id).nonzero())
-            # print("sequence size", endOfSequence)
-            # print("sequence size equal ", endOfSequence.shape[1] >= 1)
-            # endOfSequence = int(endOfSequence) if endOfSequence.shape[1] >= 1 else len(labels[sent_id]) 
             indicies = random.sample(range(1, endOfSequence), round((endOfSequence-1)*.15))
-            # print("indicies", indicies)
             for i in range(len(labels[sent_id])):
                 if i not in indicies:
                     token_ids[sent_id].append(int(labels[sent_id][i]))
@@ -73,14 +65,8 @@ class SingleLineDataset(Dataset):
                     else:
                         # and in another 10% of cases, the token will remain unchanged.
                         token_ids[sent_id].append(labels[sent_id][i])
-            # print("maskedid", self.tokenizer.mask_token_id)
-            # print("clsid", self.tokenizer.cls_token_id)
-            # print("separateid", self.tokenizer.sep_token_id)
-            # print("tokenid", token_ids[sent_id])
             for val in indicies:
                 chosen.append([sent_id, val])
-            # print("chosen", chosen)
-            # print("---------------------------------------------------------------------------")
             
         token_ids = torch.LongTensor(token_ids)
         token_ids = torch.reshape(token_ids, (batch_size,-1))
