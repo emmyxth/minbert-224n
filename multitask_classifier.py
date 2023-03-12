@@ -267,9 +267,6 @@ def train_multitask(args):
 
         train_loss = train_loss / (num_batches)
 
-        # train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
-        # dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
-
         train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
         dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
 
@@ -333,15 +330,9 @@ def pretrain_on_domain_data(args):
             b_labels = b_labels.to(device)
 
             optimizer.zero_grad()
-            # print("token id shape", b_ids.shape)
             logits = model.predict_domain_data(b_ids, b_mask)
-            # print("logits.shape before", logits.shape)
-            # print("b_labels.shape before", b_labels)
-            # print("chosen.shape", b_chosen)
             logits = logits[b_chosen[:,0], b_chosen[:,1]]
             b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
-            # print("logits.shape after", logits.shape)
-            # print("b_labels.shape after", b_labels)
             loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
             loss.backward()
