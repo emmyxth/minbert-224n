@@ -62,7 +62,6 @@ class InferenceDataset(Dataset):
         sent2 = [x[1] for x in data]
         sent_ids = [x[2] for x in data]
         labels = [x[3] for x in data]
-        genres = [x[4] for x in data]
 
         encoding1 = self.tokenizer(sent1, return_tensors='pt', padding=True, truncation=True)
         encoding2 = self.tokenizer(sent2, return_tensors='pt', padding=True, truncation=True)
@@ -99,7 +98,7 @@ class InferenceDataset(Dataset):
 
         return batched_data
 
-#Loading data from JSON file as [(sent1, sent2, pairid, label, genre)]
+#Loading data from JSON file as [(sent1, sent2, pairid, label)]
 def load_data(filename):
     data = []
     with open(filename) as f:
@@ -111,20 +110,13 @@ def load_data(filename):
             sent2 = loaded_example["sentence2"].lower().strip()
             pairid = loaded_example["pairID"].lower().strip()
             label = LABEL_MAP[loaded_example["gold_label"]]
-            genre = loaded_example["genre"]
-            data.append((sent1, sent2, pairid, label, genre))
+            data.append((sent1, sent2, pairid, label))
         random.seed(1)
         random.shuffle(data)
     print(f"load {len(data)} data from {filename}")
     return data
 
 class BertInference(torch.nn.Module):
-    '''
-    This module performs sentiment classification using BERT embeddings on the SST dataset.
-
-    In the SST dataset, there are 5 sentiment categories (from 0 - "negative" to 4 - "positive").
-    Thus, your forward() should return one logit for each of the 5 classes.
-    '''
     def __init__(self, config):
         super(BertInference, self).__init__()
         self.num_labels = config.num_labels
@@ -132,7 +124,7 @@ class BertInference(torch.nn.Module):
         #Updating BERT parameters
         for param in self.bert.parameters():
             param.requires_grad = True
-        self.linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+        self.linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 3)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
 
@@ -218,8 +210,8 @@ def train(args):
 
             optimizer.zero_grad()
             logits = model(b_ids1, b_mask1, b_ids2, b_mask2)
-            print("LOGITS", logits)
-            loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+            print("LOGITS", logits.shape)
+            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
             loss.backward()
             optimizer.step()
@@ -263,7 +255,7 @@ if __name__ == "__main__":
     seed_everything(args.seed)
     #args.filepath = f'{args.option}-{args.epochs}-{args.lr}.pt'
 
-    print('Training Sentiment Classifier on Inference Dataset...')
+    print('Training inference on Inference Dataset...')
     config = SimpleNamespace(
         filepath='inf-classifier.pt',
         lr=args.lr,
