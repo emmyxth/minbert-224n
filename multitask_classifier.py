@@ -137,7 +137,6 @@ def train_multitask(args):
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
     # Load data
     # Create the data and its corresponding datasets and dataloader
-
     sst_train_data, num_labels,para_train_data, sts_train_data = load_multitask_data(args.sst_train,args.para_train,args.sts_train, split ='train')
     sst_dev_data, num_labels,para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev,args.para_dev,args.sts_dev, split ='train')
 
@@ -149,7 +148,6 @@ def train_multitask(args):
     sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size,
                                     collate_fn=sst_dev_data.collate_fn)
     
-    #############################
     para_train_data = SentencePairDataset(para_train_data, args)
     para_dev_data = SentencePairDataset(para_dev_data, args) 
 
@@ -165,11 +163,8 @@ def train_multitask(args):
                                         collate_fn=sts_train_data.collate_fn)
     sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size,
                                     collate_fn=sts_dev_data.collate_fn)
-    ###################################
 
     # Init model
-    #saved = torch.load(args.pretrained_weights_path)
-
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
               'num_labels': num_labels,
               'hidden_size': 768,
@@ -180,7 +175,9 @@ def train_multitask(args):
 
     model = MultitaskBERT(config)
     model = model.to(device)
-    #model.load_state_dict(saved['model'])
+    if args.pretrained_weights_path:
+        saved = torch.load(args.pretrained_weights_path)
+        model.load_state_dict(saved['model'])
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -196,6 +193,7 @@ def train_multitask(args):
                         tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
                         tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)): 
             
+            #SENTIMENT
             b_ids_sst, b_mask_sst, b_labels_sst = (batch_sst['token_ids'],
                                        batch_sst['attention_mask'], batch_sst['labels'])
 
@@ -212,14 +210,7 @@ def train_multitask(args):
 
             average_loss += loss_sst.item()
             
-            print(f"Epoch {epoch}: finished training on sst dataset")
-
-        # train_loss = 0
-        # num_batches = 0
-        # for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-        #     print(f"Epoch {epoch}: batch{num_batches}")
-
-        #PARAPHRASING
+            #PARAPHRASING
             (b_ids1_para, b_mask1_para,
              b_ids2_para, b_mask2_para,
              b_labels_para, b_sent_ids_para) = (batch_para['token_ids_1'], batch_para['attention_mask_1'],
@@ -240,13 +231,8 @@ def train_multitask(args):
             optimizer.step()
 
             average_loss += loss_para.item()
-            num_batches += 1
 
-            print(f"Epoch {epoch}: finished training on para dataset")
-
-        # train_loss = 0
-        # num_batches = 0
-        # for batch in tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            #SIMILARITY
             (b_ids1_sts, b_mask1_sts,
              b_ids2_sts, b_mask2_sts,
              b_labels_sts, b_sent_ids_sts) = (batch_sts['token_ids_1'], batch_sts['attention_mask_1'],
@@ -261,7 +247,6 @@ def train_multitask(args):
 
             optimizer.zero_grad()
             logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
-            #loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
             loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
 
             loss_sts.backward()
@@ -269,12 +254,9 @@ def train_multitask(args):
 
             average_loss += loss_sts.item()
             
-            #For each batch, computer average of all losses
+            #For each batch, compute average of all losses
             train_loss += average_loss / 3
             num_batches += 1
-            print(f"Epoch {epoch}: finished training on sts dataset")
-
-        print(f"Train loss: {train_loss}")
 
         train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
         dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
