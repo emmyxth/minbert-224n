@@ -341,8 +341,7 @@ def model_eval_inference(inference_dataloader, model, device):
         inf_y_pred = []
         inf_sent_ids = []
 
-
-        # Evaluate semantic textual similarity.
+        # Evaluate pretraining data on inference.
         for step, batch in enumerate(tqdm(inference_dataloader, desc=f'eval', disable=TQDM_DISABLE)):
             (b_ids1, b_mask1,
              b_ids2, b_mask2,
@@ -355,14 +354,14 @@ def model_eval_inference(inference_dataloader, model, device):
             b_ids2 = b_ids2.to(device)
             b_mask2 = b_mask2.to(device)
 
-            logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
-            y_hat = logits.flatten().cpu().numpy()
+            logits = model.predict_inference(b_ids1, b_mask1, b_ids2, b_mask2)
+            y_hat = logits.argmax(dim=-1).flatten().cpu().numpy()
             b_labels = b_labels.flatten().cpu().numpy()
 
             inf_y_pred.extend(y_hat)
             inf_y_true.extend(b_labels)
             inf_sent_ids.extend(b_sent_ids)
-        
+
         inf_accuracy = np.mean(np.array(inf_y_pred) == np.array(inf_y_true))
 
         print(f'Inference accuracy: {inf_accuracy:.3f}')
