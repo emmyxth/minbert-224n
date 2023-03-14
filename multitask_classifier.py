@@ -217,86 +217,74 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
-        max_len = max(len(sst_train_dataloader), len(para_train_dataloader), len(sts_train_dataloader))
-        if max_len == len(sst_train_dataloader):
-            zip_list = zip(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE), 
-                        cycle(tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)),
-                        cycle(tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)))
-        elif max_len == len(para_train_dataloader):
-            zip_list = zip(cycle(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)), 
-                        tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
-                        cycle(tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)))
-        else:
-             zip_list = zip(cycle(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)), 
-                        cycle(tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)),
-                        tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE))
-        for batch_sst, batch_para, batch_sts in zip_list: 
-            average_loss = 0
-            
-            #SENTIMENT
-            b_ids_sst, b_mask_sst, b_labels_sst = (batch_sst['token_ids'],
-                                       batch_sst['attention_mask'], batch_sst['labels'])
 
-            b_ids_sst = b_ids_sst.to(device)
-            b_mask_sst = b_mask_sst.to(device)
-            b_labels_sst = b_labels_sst.to(device)
+        for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            b_ids, b_mask, b_labels = (batch['token_ids'],
+                                       batch['attention_mask'], batch['labels'])
+
+            b_ids = b_ids.to(device)
+            b_mask = b_mask.to(device)
+            b_labels = b_labels.to(device)
 
             optimizer.zero_grad()
-            logits_sst = model.predict_sentiment(b_ids_sst, b_mask_sst)
-            loss_sst = F.cross_entropy(logits_sst, b_labels_sst.view(-1), reduction='sum') / args.batch_size
+            logits = model.predict_sentiment(b_ids, b_mask)
+            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
-            loss_sst.backward()
+            loss.backward()
             optimizer.step()
 
-            average_loss += loss_sst.item()
-            
-            #PARAPHRASING
-            (b_ids1_para, b_mask1_para,
-             b_ids2_para, b_mask2_para,
-             b_labels_para, b_sent_ids_para) = (batch_para['token_ids_1'], batch_para['attention_mask_1'],
-                          batch_para['token_ids_2'], batch_para['attention_mask_2'],
-                          batch_para['labels'], batch_para['sent_ids'])
-
-            b_ids1_para = b_ids1_para.to(device)
-            b_mask1_para = b_mask1_para.to(device)
-            b_ids2_para = b_ids2_para.to(device)
-            b_mask2_para = b_mask2_para.to(device)
-            b_labels_para = b_labels_para.to(device)
-
-            optimizer.zero_grad()
-            logits_para = model.predict_paraphrase(b_ids1_para, b_mask1_para, b_ids2_para, b_mask2_para)
-            loss_para = F.binary_cross_entropy(logits_para.sigmoid().view(-1), b_labels_para.view(-1).float(), reduction='mean')
-            
-            loss_para.backward()
-            optimizer.step()
-
-            average_loss += loss_para.item()
-
-            #SIMILARITY
-            (b_ids1_sts, b_mask1_sts,
-             b_ids2_sts, b_mask2_sts,
-             b_labels_sts, b_sent_ids_sts) = (batch_sts['token_ids_1'], batch_sts['attention_mask_1'],
-                          batch_sts['token_ids_2'], batch_sts['attention_mask_2'],
-                          batch_sts['labels'], batch_sts['sent_ids'])
-
-            b_ids1_sts = b_ids1_sts.to(device)
-            b_mask1_sts = b_mask1_sts.to(device)
-            b_ids2_sts = b_ids2_sts.to(device)
-            b_mask2_sts = b_mask2_sts.to(device)
-            b_labels_sts = b_labels_sts.to(device)
-
-            optimizer.zero_grad()
-            logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
-            loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
-
-            loss_sts.backward()
-            optimizer.step()
-
-            average_loss += loss_sts.item()
-            
-            #For each batch, compute average of all losses
-            train_loss += average_loss / 3
+            train_loss += loss.item()
             num_batches += 1
+        print(f"Epoch {epoch}: finished training on sst dataset")
+
+        for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            print(f"Epoch {epoch}: batch{num_batches}")
+            (b_ids1, b_mask1,
+             b_ids2, b_mask2,
+             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
+                          batch['token_ids_2'], batch['attention_mask_2'],
+                          batch['labels'], batch['sent_ids'])
+
+            b_ids1 = b_ids1.to(device)
+            b_mask1 = b_mask1.to(device)
+            b_ids2 = b_ids2.to(device)
+            b_mask2 = b_mask2.to(device)
+            b_labels = b_labels.to(device)
+
+            optimizer.zero_grad()
+            logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
+            loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+            
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+            num_batches += 1
+        print(f"Epoch {epoch}: finished training on para dataset")
+
+        for batch in tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            (b_ids1, b_mask1,
+             b_ids2, b_mask2,
+             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
+                          batch['token_ids_2'], batch['attention_mask_2'],
+                          batch['labels'], batch['sent_ids'])
+
+            b_ids1 = b_ids1.to(device)
+            b_mask1 = b_mask1.to(device)
+            b_ids2 = b_ids2.to(device)
+            b_mask2 = b_mask2.to(device)
+            b_labels = b_labels.to(device)
+
+            optimizer.zero_grad()
+            logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
+            loss = F.mse_loss(logits, b_labels.float())
+
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+            num_batches += 1
+        print(f"Epoch {epoch}: finished training on sts dataset")
 
         train_loss = train_loss / (num_batches)
         paraphrase_accuracy, _, _, sentiment_accuracy, _, _, sts_corr, _, _= model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
