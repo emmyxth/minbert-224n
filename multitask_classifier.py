@@ -14,7 +14,7 @@ from datasets import SentenceClassificationDataset, SentencePairDataset, SingleL
     load_multitask_data, load_pretrain_data
 from tokenizer import BertTokenizer
 
-from evaluation import model_eval_sst, test_model_multitask, model_eval_multitask
+from evaluation import model_eval_sst, test_model_multitask, model_eval_multitask, model_eval_pretrain_domain
 
 TQDM_DISABLE=False
 
@@ -258,9 +258,11 @@ def train_multitask(args):
             train_loss += average_loss / 3
             num_batches += 1
 
-        train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
-        dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
+        paraphrase_accuracy, _, _, sentiment_accuracy, _, _, sts_corr, _, _= model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        dev_paraphrase_accuracy, _, _, dev_sentiment_accuracy, _, _, dev_sts_corr, _, _ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
 
+        train_acc = paraphrase_accuracy+sentiment_accuracy+sts_corr
+        dev_acc  = dev_paraphrase_accuracy+dev_sentiment_accuracy+dev_sts_corr
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
             save_model(model, optimizer, args, config, args.filepath)
@@ -292,6 +294,12 @@ def pretrain_on_domain_data(args):
     pretrain_data = SingleLineDataset(train_data, args)
     pretrain_data_dataloader = DataLoader(pretrain_data, shuffle=True, batch_size=args.batch_size,
                                         collate_fn=pretrain_data.collate_fn)
+    
+    dev_data = load_pretrain_data(args.sst_dev,args.para_dev,args.sts_dev)
+
+    pretrain_dev_data = SingleLineDataset(dev_data, args)
+    pretrain_dev_data_dataloader = DataLoader(pretrain_dev_data, shuffle=False, batch_size=args.batch_size,
+                                        collate_fn=pretrain_dev_data.collate_fn)
 
     # Init model
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
@@ -306,35 +314,41 @@ def pretrain_on_domain_data(args):
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
+    best_dev_acc = 0
 
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
         num_batches = 0
-        for batch in tqdm(pretrain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'], batch['chosen'])
+        # for batch in tqdm(pretrain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+        #     b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
+        #                                batch['attention_mask'], batch['labels'], batch['chosen'])
             
-            b_chosen = b_chosen.to(device)
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            b_labels = b_labels.to(device)
+        #     b_chosen = b_chosen.to(device)
+        #     b_ids = b_ids.to(device)
+        #     b_mask = b_mask.to(device)
+        #     b_labels = b_labels.to(device)
 
-            optimizer.zero_grad()
-            logits = model.predict_domain_data(b_ids, b_mask)
-            logits = logits[b_chosen[:,0], b_chosen[:,1]]
-            b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+        #     optimizer.zero_grad()
+        #     logits = model.predict_domain_data(b_ids, b_mask)
+        #     logits = logits[b_chosen[:,0], b_chosen[:,1]]
+        #     b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
+        #     loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
-            loss.backward()
-            optimizer.step()
+        #     loss.backward()
+        #     optimizer.step()
 
-            train_loss += loss.item()
-            num_batches += 1
+        #     train_loss += loss.item()
+        #     num_batches += 1
+
+        train_acc = model_eval_pretrain_domain(pretrain_data_dataloader, model, device)
+        dev_acc = model_eval_pretrain_domain(pretrain_dev_data_dataloader, model, device)
+        if dev_acc > best_dev_acc:
+            best_dev_acc = dev_acc
+            save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
 
         train_loss = train_loss / (num_batches)
-        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}")
-        save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
+        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
 
 
 def get_args():
