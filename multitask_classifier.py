@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
+from pcgrad import PCGrad
 
 from datasets import SentenceClassificationDataset, SentencePairDataset, SingleLineDataset, InferenceDataset, \
     load_multitask_data, load_pretrain_data, load_inference_data
@@ -208,8 +209,12 @@ def train_multitask(args):
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
+    optimizer = PCGrad(optimizer) 
+
+
     best_dev_acc = 0
 
+    max_batch = max(len(sst_train_dataloader), len(sts_train_dataloader), len(para_train_dataloader))
     # Run for the specified number of epochs
     for epoch in range(args.epochs):
         model.train()
@@ -364,8 +369,13 @@ def pretrain_on_inference(args):
 
             loss.backward()
             optimizer.step()
-
-            train_loss += loss.item()
+            '''
+            losses += [loss1] if loss1 is not None else []
+            losses += [loss2] if loss2 is not None else []
+            losses += [loss3] if loss3 is not None else []
+            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
+            optimizer.step()  # apply gradient step
+            '''
             num_batches += 1
 
         train_loss = train_loss / (num_batches)
