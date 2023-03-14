@@ -148,7 +148,6 @@ class MultitaskBERT(nn.Module):
 def save_model(model, optimizer, args, config, filepath):
     save_info = {
         'model': model.state_dict(),
-        'optim': optimizer.state_dict(),
         'args': args,
         'model_config': config,
         'system_rng': random.getstate(),
@@ -209,21 +208,18 @@ def train_multitask(args):
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
-    optimizer = PCGrad(optimizer) 
-
 
     best_dev_acc = 0
 
-    max_batch = max(len(sst_train_dataloader), len(sts_train_dataloader), len(para_train_dataloader))
     # Run for the specified number of epochs
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
-        average_loss = 0
         num_batches = 0
         for batch_sst, batch_para, batch_sts in zip(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE), 
                         tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
                         tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)): 
+            average_loss = 0
             
             #SENTIMENT
             b_ids_sst, b_mask_sst, b_labels_sst = (batch_sst['token_ids'],
@@ -317,94 +313,35 @@ def test_model(args):
 
         test_model_multitask(args, model, device)
 
-def pretrain_on_inference(args):
-    device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-    # Load data
-    # Create the data and its corresponding datasets and dataloader
-    train_data = load_inference_data('multinli_1.0/multinli_1.0_train.jsonl')
-    dev_data = load_inference_data('multinli_1.0/multinli_1.0_dev_matched.jsonl')
-
-    train_dataset = InferenceDataset(train_data, args)
-    dev_dataset = InferenceDataset(dev_data, args)
-    
-    inf_train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size,
-                                        collate_fn=train_dataset.collate_fn)
-    inf_dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size,
-                                    collate_fn=dev_dataset.collate_fn)
-    
-    config = {'hidden_dropout_prob': args.hidden_dropout_prob,
-              'hidden_size': 768,
-              'data_dir': '.',
-              'option': args.option}
-
-    config = SimpleNamespace(**config)
-    model = MultitaskBERT(config)
-    model = model.to(device)
-
-    lr = args.lr
-    optimizer = AdamW(model.parameters(), lr=lr)
-    best_dev_acc = 0
-
-    # Run for the specified number of epochs
-    for epoch in range(args.epochs):
-        model.train()
-        train_loss = 0
-        num_batches = 0
-        for batch in tqdm(inf_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            (b_ids1, b_mask1,
-             b_ids2, b_mask2,
-             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
-                          batch['token_ids_2'], batch['attention_mask_2'],
-                          batch['labels'], batch['sent_ids'])
-
-            b_ids1 = b_ids1.to(device)
-            b_mask1 = b_mask1.to(device)
-            b_ids2 = b_ids2.to(device)
-            b_mask2 = b_mask2.to(device)
-            b_labels = b_labels.to(device)
-
-            optimizer.zero_grad()
-            logits = model.predict_inference(b_ids1, b_mask1, b_ids2, b_mask2)
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
-
-            loss.backward()
-            optimizer.step()
-            '''
-            losses += [loss1] if loss1 is not None else []
-            losses += [loss2] if loss2 is not None else []
-            losses += [loss3] if loss3 is not None else []
-            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
-            optimizer.step()  # apply gradient step
-            '''
-            num_batches += 1
-
-        train_loss = train_loss / (num_batches)
-
-        train_accuracy, _, _  = model_eval_inference(inf_train_dataloader, model, device)
-        dev_accuracy, _, _ = model_eval_inference(inf_dev_dataloader, model, device)
-
-        if dev_accuracy > best_dev_acc:
-            best_dev_acc = dev_accuracy
-            save_model(model, optimizer, args, config, args.filepath)
-
-        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_accuracy :.3f}, dev acc :: {dev_accuracy :.3f}")
-
-def pretrain_on_domain_data(args):
+def pretrain(args):
     assert(args.pretrained_weights_path)
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
     # Load data
     # Create the data and its corresponding datasets and dataloader
-    train_data = load_pretrain_data(args.sst_train,args.para_train,args.sts_train)
 
-    pretrain_data = SingleLineDataset(train_data, args)
-    pretrain_data_dataloader = DataLoader(pretrain_data, shuffle=True, batch_size=args.batch_size,
-                                        collate_fn=pretrain_data.collate_fn)
+    #DOMAIN_DATASET
+    domain_train_data = load_pretrain_data(args.sst_train,args.para_train,args.sts_train)
+    domain_dev_data = load_pretrain_data(args.sst_dev,args.para_dev,args.sts_dev)
+
+    domain_data = SingleLineDataset(domain_train_data, args)
+    domain_data_dataloader = DataLoader(domain_data, shuffle=True, batch_size=args.batch_size,
+                                        collate_fn=domain_data.collate_fn)
+
+    domain_dev_data = SingleLineDataset(domain_dev_data, args)
+    domain_dev_data_dataloader = DataLoader(domain_dev_data, shuffle=False, batch_size=args.batch_size,
+                                        collate_fn=domain_dev_data.collate_fn)
     
-    dev_data = load_pretrain_data(args.sst_dev,args.para_dev,args.sts_dev)
+    #INFERENCE_DATASET
+    inference_train_data = load_inference_data('multinli_1.0/multinli_1.0_train.jsonl')
+    inference_dev_data = load_inference_data('multinli_1.0/multinli_1.0_dev_matched.jsonl')
 
-    pretrain_dev_data = SingleLineDataset(dev_data, args)
-    pretrain_dev_data_dataloader = DataLoader(pretrain_dev_data, shuffle=False, batch_size=args.batch_size,
-                                        collate_fn=pretrain_dev_data.collate_fn)
+    inference_train_dataset = InferenceDataset(inference_train_data, args)
+    inference_dev_dataset = InferenceDataset(inference_dev_data, args)
+    
+    inference_train_dataloader = DataLoader(inference_train_dataset, shuffle=True, batch_size=args.batch_size,
+                                        collate_fn=inference_train_dataset.collate_fn)
+    inference_dev_dataloader = DataLoader(inference_dev_dataset, shuffle=False, batch_size=args.batch_size,
+                                    collate_fn=inference_dev_dataset.collate_fn)
 
     # Init model
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
@@ -419,35 +356,71 @@ def pretrain_on_domain_data(args):
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
+    optimizer = PCGrad(optimizer) 
     best_dev_acc = 0
 
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
         num_batches = 0
-        for batch in tqdm(pretrain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'], batch['chosen'])
+        for domain_batch, inference_batch in zip(tqdm(domain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
+                         tqdm(inference_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)):
             
-            b_chosen = b_chosen.to(device)
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            b_labels = b_labels.to(device)
+            average_loss = 0
+            
+            #DOMAIN
+            domain_ids, domain_mask, domain_labels, domain_chosen = (domain_batch['token_ids'],
+                                       domain_batch['attention_mask'], domain_batch['labels'], domain_batch['chosen'])
+            
+            domain_chosen = domain_chosen.to(device)
+            domain_ids = domain_ids.to(device)
+            domain_mask = domain_mask.to(device)
+            domain_labels = domain_labels.to(device)
 
             optimizer.zero_grad()
-            logits = model.predict_domain_data(b_ids, b_mask)
-            logits = logits[b_chosen[:,0], b_chosen[:,1]]
-            b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+            logits = model.predict_domain_data(domain_ids, domain_mask)
+            logits = logits[domain_chosen[:,0], domain_chosen[:,1]]
+            domain_labels = domain_labels[domain_chosen[:,0], domain_chosen[:,1]]
+            loss1 = F.cross_entropy(logits, domain_labels.view(-1), reduction='sum') / args.batch_size
 
-            loss.backward()
-            optimizer.step()
+            average_loss += loss1.item()
 
-            train_loss += loss.item()
+            #INFERENCE
+            (inference_ids1, inference_mask1,
+             inference_ids2, inference_mask2,
+             inference_labels, inference_sent_ids) = (inference_batch['token_ids_1'], inference_batch['attention_mask_1'],
+                          inference_batch['token_ids_2'], inference_batch['attention_mask_2'],
+                          inference_batch['labels'], inference_batch['sent_ids'])
+
+            inference_ids1 = inference_ids1.to(device)
+            inference_mask1 = inference_mask1.to(device)
+            inference_ids2 = inference_ids2.to(device)
+            inference_mask2 = inference_mask2.to(device)
+            inference_labels = inference_labels.to(device)
+
+            logits = model.predict_inference(inference_ids1, inference_mask1, inference_ids2, inference_mask2)
+            loss2 = F.cross_entropy(logits, inference_labels.view(-1), reduction='sum') / args.batch_size
+
             num_batches += 1
+            average_loss += loss2.item()
+            train_loss += average_loss/2
 
-        train_acc = model_eval_pretrain_domain(pretrain_data_dataloader, model, device)
-        dev_acc = model_eval_pretrain_domain(pretrain_dev_data_dataloader, model, device)
+            losses = [loss1, loss2]
+            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
+            optimizer.step()  # apply gradient step
+
+        domain_train_acc = model_eval_pretrain_domain(domain_data_dataloader, model, device)
+        domain_dev_acc = model_eval_pretrain_domain(domain_dev_data_dataloader, model, device)
+
+        inference_train_accuracy, _, _  = model_eval_inference(inference_train_dataloader, model, device)
+        inference_dev_accuracy, _, _ = model_eval_inference(inference_dev_dataloader, model, device)
+
+        train_acc = domain_train_acc + inference_train_accuracy
+        dev_acc = domain_dev_acc + inference_dev_accuracy
+
+        dev_acc = 1
+        train_acc=1
+
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
             save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
@@ -488,8 +461,6 @@ def get_args():
 
     parser.add_argument("--pretrained_weights_path", type=str)
 
-    parser.add_argument("--inference_weights_path", type=str)
-
     # hyper parameters
     parser.add_argument("--batch_size", help='sst: 64, cfimdb: 8 can fit a 12GB GPU', type=int, default=8)
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.3)
@@ -504,9 +475,7 @@ if __name__ == "__main__":
     args.filepath = f'{args.option}-{args.epochs}-{args.lr}-multitask.pt' # save path
     seed_everything(args.seed)  # fix the seed for reproducibility
     if args.pretrained_weights_path and args.option == "finetune":
-        pretrain_on_domain_data(args)
-    elif args.inference_weights_path and args.option == "finetune":
-        pretrain_on_inference(args)
+        pretrain(args)
     else:
         train_multitask(args)
         test_model(args)
