@@ -320,26 +320,26 @@ def pretrain_on_domain_data(args):
         model.train()
         train_loss = 0
         num_batches = 0
-        # for batch in tqdm(pretrain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-        #     b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
-        #                                batch['attention_mask'], batch['labels'], batch['chosen'])
+        for batch in tqdm(pretrain_data_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+            b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
+                                       batch['attention_mask'], batch['labels'], batch['chosen'])
             
-        #     b_chosen = b_chosen.to(device)
-        #     b_ids = b_ids.to(device)
-        #     b_mask = b_mask.to(device)
-        #     b_labels = b_labels.to(device)
+            b_chosen = b_chosen.to(device)
+            b_ids = b_ids.to(device)
+            b_mask = b_mask.to(device)
+            b_labels = b_labels.to(device)
 
-        #     optimizer.zero_grad()
-        #     logits = model.predict_domain_data(b_ids, b_mask)
-        #     logits = logits[b_chosen[:,0], b_chosen[:,1]]
-        #     b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
-        #     loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+            optimizer.zero_grad()
+            logits = model.predict_domain_data(b_ids, b_mask)
+            logits = logits[b_chosen[:,0], b_chosen[:,1]]
+            b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
+            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
-        #     loss.backward()
-        #     optimizer.step()
+            loss.backward()
+            optimizer.step()
 
-        #     train_loss += loss.item()
-        #     num_batches += 1
+            train_loss += loss.item()
+            num_batches += 1
 
         train_acc = model_eval_pretrain_domain(pretrain_data_dataloader, model, device)
         dev_acc = model_eval_pretrain_domain(pretrain_dev_data_dataloader, model, device)
