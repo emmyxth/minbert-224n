@@ -380,8 +380,8 @@ def pretrain_on_inference(args):
 
         train_loss = train_loss / (num_batches)
 
-        train_accuracy, train_y_pred, train_sent_ids  = model_eval_inference(inf_train_dataloader, model, device)
-        dev_accuracy, dev_y_pred, dev_sent_ids = model_eval_inference(inf_dev_dataloader, model, device)
+        train_accuracy, _, _  = model_eval_inference(inf_train_dataloader, model, device)
+        dev_accuracy, _, _ = model_eval_inference(inf_dev_dataloader, model, device)
 
         if dev_accuracy > best_dev_acc:
             best_dev_acc = dev_accuracy
