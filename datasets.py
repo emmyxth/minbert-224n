@@ -9,6 +9,7 @@ to train your model.
 
 
 import csv
+import json
 
 import torch
 from torch.utils.data import Dataset
@@ -24,6 +25,65 @@ def preprocess_string(s):
                     .replace(',', ' ,')
                     .replace('\'', ' \'')
                     .split())
+
+
+class InferenceDataset(Dataset):
+    def __init__(self, dataset, args):
+        self.dataset = dataset
+        self.p = args
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+    def tokenize(self, string):
+        string = re.sub(r'\(|\)', '', string)
+        return string.split()
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.dataset[idx]
+
+    def pad_data(self, data):
+        
+        sent1 = [x[0] for x in data]
+        sent2 = [x[1] for x in data]
+        sent_ids = [x[2] for x in data]
+        labels = [x[3] for x in data]
+
+        encoding1 = self.tokenizer(sent1, return_tensors='pt', padding=True, truncation=True)
+        encoding2 = self.tokenizer(sent2, return_tensors='pt', padding=True, truncation=True)
+
+        token_ids1 = torch.LongTensor(encoding1['input_ids'])
+        attention_mask1 = torch.LongTensor(encoding1['attention_mask'])
+        token_type_ids1 = torch.LongTensor(encoding1['token_type_ids'])
+
+        token_ids2 = torch.LongTensor(encoding2['input_ids'])
+        attention_mask2 = torch.LongTensor(encoding2['attention_mask'])
+        token_type_ids2 = torch.LongTensor(encoding2['token_type_ids'])
+
+        labels = torch.LongTensor(labels)
+
+        return (token_ids1, token_type_ids1, attention_mask1,
+                token_ids2, token_type_ids2, attention_mask2,
+                labels,sent_ids)
+
+    def collate_fn(self, all_data):
+        (token_ids1, token_type_ids1, attention_mask1,
+                token_ids2, token_type_ids2, attention_mask2,
+                labels,sent_ids) = self.pad_data(all_data)
+
+        batched_data = {
+                'token_ids_1': token_ids1,
+                'token_type_ids_1': token_type_ids1,
+                'attention_mask_1': attention_mask1,
+                'token_ids_2': token_ids2,
+                'token_type_ids_2': token_type_ids2,
+                'attention_mask_2': attention_mask2,
+                'labels': labels,
+                'sent_ids': sent_ids
+            }
+
+        return batched_data
 
 class SingleLineDataset(Dataset):
     def __init__(self, dataset, args):
@@ -305,6 +365,30 @@ def load_multitask_test_data():
     print(f"Loaded {len(similarity_data)} test examples from {similarity_filename}")
 
     return sentiment_data, paraphrase_data, similarity_data
+
+#Loading data from JSON file as [(sent1, sent2, pairid, label)]
+def load_inference_data(filename):
+    data = []
+    LABEL_MAP = {
+    "entailment": 0,
+    "neutral": 1,
+    "contradiction": 2,
+    "hidden": 0
+    }
+    with open(filename) as f:
+        for line in f:
+            loaded_example = json.loads(line)
+            if loaded_example["gold_label"] not in LABEL_MAP:
+                continue
+            sent1 = loaded_example['sentence1'].lower().strip()
+            sent2 = loaded_example["sentence2"].lower().strip()
+            pairid = loaded_example["pairID"].lower().strip()
+            label = LABEL_MAP[loaded_example["gold_label"]]
+            data.append((sent1, sent2, pairid, label))
+        random.seed(1)
+        random.shuffle(data)
+    print(f"load {len(data)} data from {filename}")
+    return data
 
 
 def load_pretrain_data(sentiment_filename,paraphrase_filename,similarity_filename):
