@@ -423,7 +423,7 @@ def pretrain(args):
 
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
-            save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
+            save_model(model, optimizer, args, config, args.pretrained_weights_path + f'full-pretrained-epoch{epoch}-lr{args.lr}.pt')
 
         train_loss = train_loss / (num_batches)
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
