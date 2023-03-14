@@ -5,6 +5,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.optim import NAdam
 
 from bert import BertModel
 from optimizer import AdamW
@@ -208,7 +209,8 @@ def train_multitask(args):
         model.load_state_dict(saved['model'])
 
     lr = args.lr
-    optimizer = AdamW(model.parameters(), lr=lr)
+    # optimizer = AdamW(model.parameters(), lr=lr)
+    optimizer = NAdam(model.parameters(), lr=lr)
 
     best_dev_acc = 0
 
