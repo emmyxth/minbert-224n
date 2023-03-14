@@ -79,17 +79,18 @@ def model_eval_multitask(sentiment_dataloader,
             b_mask1 = b_mask1.to(device)
             b_ids2 = b_ids2.to(device)
             b_mask2 = b_mask2.to(device)
+            
 
             logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
+            
             y_hat = logits.sigmoid().round().flatten().cpu().numpy()
             b_labels = b_labels.flatten().cpu().numpy()
 
             para_y_pred.extend(y_hat)
             para_y_true.extend(b_labels)
             para_sent_ids.extend(b_sent_ids)
-
+        
         paraphrase_accuracy = np.mean(np.array(para_y_pred) == np.array(para_y_true))
-
         sts_y_true = []
         sts_y_pred = []
         sts_sent_ids = []
@@ -117,7 +118,6 @@ def model_eval_multitask(sentiment_dataloader,
             sts_sent_ids.extend(b_sent_ids)
         pearson_mat = np.corrcoef(sts_y_pred,sts_y_true)
         sts_corr = pearson_mat[1][0]
-
 
         sst_y_true = []
         sst_y_pred = []
@@ -147,6 +147,39 @@ def model_eval_multitask(sentiment_dataloader,
         return (paraphrase_accuracy, para_y_pred, para_sent_ids,
                 sentiment_accuracy,sst_y_pred, sst_sent_ids,
                 sts_corr, sts_y_pred, sts_sent_ids)
+    
+def model_eval_pretrain_domain(pretrain_data_dataloader,
+                         model, device):
+    model.eval()  # switch to eval model, will turn off randomness like dropout
+
+    with torch.no_grad():
+        y_true = []
+        y_pred = []
+
+        # Evaluate prediction of masked tokens in domain data.
+        for batch in tqdm(pretrain_data_dataloader, desc=f'eval', disable=TQDM_DISABLE):
+            b_ids, b_mask, b_labels, b_chosen = (batch['token_ids'],
+                                       batch['attention_mask'], batch['labels'], batch['chosen'])
+            
+            b_chosen = b_chosen.to(device)
+            b_ids = b_ids.to(device)
+            b_mask = b_mask.to(device)
+            b_labels = b_labels.to(device)
+
+            logits = model.predict_domain_data(b_ids, b_mask)
+            logits = logits[b_chosen[:,0], b_chosen[:,1]]
+            y_hat = logits.argmax(dim=-1).flatten().cpu().numpy()
+            b_labels = b_labels[b_chosen[:,0], b_chosen[:,1]]
+            b_labels = b_labels.flatten().cpu().numpy()
+
+            y_pred.extend(y_hat)
+            y_true.extend(b_labels)
+
+        pretrain_accuracy = np.mean(np.array(y_pred) == np.array(y_true))
+
+        print(f'Pretrain domain data accuracy: {pretrain_accuracy:.3f}')
+
+        return pretrain_accuracy
 
 # Perform model evaluation in terms by averaging accuracies across tasks.
 def model_eval_test_multitask(sentiment_dataloader,

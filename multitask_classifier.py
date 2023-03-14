@@ -13,7 +13,7 @@ from tqdm import tqdm
 from datasets import SentenceClassificationDataset, SentencePairDataset, SingleLineDataset, InferenceDataset, \
     load_multitask_data, load_pretrain_data, load_inference_data
 
-from evaluation import model_eval_sst, test_model_multitask, model_eval_multitask, model_eval_inference
+from evaluation import model_eval_sst, test_model_multitask, model_eval_multitask, model_eval_inference, model_eval_pretrain_domain
 
 from lib2to3.pgen2.tokenize import tokenize
 import time, random, numpy as np, argparse, sys, re, os
@@ -125,7 +125,7 @@ class MultitaskBERT(nn.Module):
         res1 = self.similarity_dropout(res1)
         res2 = self.similarity_dropout(res2)
         res = torch.cat((res1,res2),-1)
-        return self.similarity_linear(res)
+        return self.similarity_linear(res).squeeze(-1)
     
     def predict_domain_data(self, input_ids, attention_mask):
         res = self.bert(input_ids, attention_mask)['last_hidden_state'] # this has cls token hidden state
@@ -164,7 +164,6 @@ def train_multitask(args):
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
     # Load data
     # Create the data and its corresponding datasets and dataloader
-
     sst_train_data, num_labels,para_train_data, sts_train_data = load_multitask_data(args.sst_train,args.para_train,args.sts_train, split ='train')
     sst_dev_data, num_labels,para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev,args.para_dev,args.sts_dev, split ='train')
 
@@ -176,7 +175,6 @@ def train_multitask(args):
     sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size,
                                     collate_fn=sst_dev_data.collate_fn)
     
-    #############################
     para_train_data = SentencePairDataset(para_train_data, args)
     para_dev_data = SentencePairDataset(para_dev_data, args) 
 
@@ -192,11 +190,8 @@ def train_multitask(args):
                                         collate_fn=sts_train_data.collate_fn)
     sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size,
                                     collate_fn=sts_dev_data.collate_fn)
-    ###################################
 
     # Init model
-    saved = torch.load(args.pretrained_weights_path)
-
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
               'num_labels': num_labels,
               'hidden_size': 768,
@@ -207,7 +202,9 @@ def train_multitask(args):
 
     model = MultitaskBERT(config)
     model = model.to(device)
-    model.load_state_dict(saved['model'])
+    if args.pretrained_weights_path:
+        saved = torch.load(args.pretrained_weights_path)
+        model.load_state_dict(saved['model'])
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -217,86 +214,83 @@ def train_multitask(args):
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
+        average_loss = 0
         num_batches = 0
-        for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            b_ids, b_mask, b_labels = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'])
-
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            b_labels = b_labels.to(device)
-
-            optimizer.zero_grad()
-            logits = model.predict_sentiment(b_ids, b_mask)
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
-
-            loss.backward()
-            optimizer.step()
-
-            train_loss += loss.item()
-            num_batches += 1
-        print(f"Epoch {epoch}: finished training on sst dataset")
-
-        train_loss = 0
-        num_batches = 0
-        for batch in tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            print(f"Epoch {epoch}: batch{num_batches}")
-            (b_ids1, b_mask1,
-             b_ids2, b_mask2,
-             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
-                          batch['token_ids_2'], batch['attention_mask_2'],
-                          batch['labels'], batch['sent_ids'])
-
-            b_ids1 = b_ids1.to(device)
-            b_mask1 = b_mask1.to(device)
-            b_ids2 = b_ids2.to(device)
-            b_mask2 = b_mask2.to(device)
-            b_labels = b_labels.to(device)
-
-            optimizer.zero_grad()
-            logits = model.predict_paraphrase(b_ids1, b_mask1, b_ids2, b_mask2)
-            loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+        for batch_sst, batch_para, batch_sts in zip(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE), 
+                        tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
+                        tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)): 
             
-            loss.backward()
-            optimizer.step()
+            #SENTIMENT
+            b_ids_sst, b_mask_sst, b_labels_sst = (batch_sst['token_ids'],
+                                       batch_sst['attention_mask'], batch_sst['labels'])
 
-            train_loss += loss.item()
-            num_batches += 1
-
-        print(f"Epoch {epoch}: finished training on para dataset")
-
-        train_loss = 0
-        num_batches = 0
-        for batch in tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            (b_ids1, b_mask1,
-             b_ids2, b_mask2,
-             b_labels, b_sent_ids) = (batch['token_ids_1'], batch['attention_mask_1'],
-                          batch['token_ids_2'], batch['attention_mask_2'],
-                          batch['labels'], batch['sent_ids'])
-
-            b_ids1 = b_ids1.to(device)
-            b_mask1 = b_mask1.to(device)
-            b_ids2 = b_ids2.to(device)
-            b_mask2 = b_mask2.to(device)
-            b_labels = b_labels.to(device)
+            b_ids_sst = b_ids_sst.to(device)
+            b_mask_sst = b_mask_sst.to(device)
+            b_labels_sst = b_labels_sst.to(device)
 
             optimizer.zero_grad()
-            logits = model.predict_similarity(b_ids1, b_mask1, b_ids2, b_mask2)
-            loss = F.binary_cross_entropy(logits.sigmoid().view(-1), b_labels.view(-1).float(), reduction='mean')
+            logits_sst = model.predict_sentiment(b_ids_sst, b_mask_sst)
+            loss_sst = F.cross_entropy(logits_sst, b_labels_sst.view(-1), reduction='sum') / args.batch_size
 
-            loss.backward()
+            loss_sst.backward()
             optimizer.step()
 
-            train_loss += loss.item()
-            num_batches += 1
-        print(f"Epoch {epoch}: finished training on sts dataset")
+            average_loss += loss_sst.item()
+            
+            #PARAPHRASING
+            (b_ids1_para, b_mask1_para,
+             b_ids2_para, b_mask2_para,
+             b_labels_para, b_sent_ids_para) = (batch_para['token_ids_1'], batch_para['attention_mask_1'],
+                          batch_para['token_ids_2'], batch_para['attention_mask_2'],
+                          batch_para['labels'], batch_para['sent_ids'])
 
+            b_ids1_para = b_ids1_para.to(device)
+            b_mask1_para = b_mask1_para.to(device)
+            b_ids2_para = b_ids2_para.to(device)
+            b_mask2_para = b_mask2_para.to(device)
+            b_labels_para = b_labels_para.to(device)
+
+            optimizer.zero_grad()
+            logits_para = model.predict_paraphrase(b_ids1_para, b_mask1_para, b_ids2_para, b_mask2_para)
+            loss_para = F.binary_cross_entropy(logits_para.sigmoid().view(-1), b_labels_para.view(-1).float(), reduction='mean')
+            
+            loss_para.backward()
+            optimizer.step()
+
+            average_loss += loss_para.item()
+
+            #SIMILARITY
+            (b_ids1_sts, b_mask1_sts,
+             b_ids2_sts, b_mask2_sts,
+             b_labels_sts, b_sent_ids_sts) = (batch_sts['token_ids_1'], batch_sts['attention_mask_1'],
+                          batch_sts['token_ids_2'], batch_sts['attention_mask_2'],
+                          batch_sts['labels'], batch_sts['sent_ids'])
+
+            b_ids1_sts = b_ids1_sts.to(device)
+            b_mask1_sts = b_mask1_sts.to(device)
+            b_ids2_sts = b_ids2_sts.to(device)
+            b_mask2_sts = b_mask2_sts.to(device)
+            b_labels_sts = b_labels_sts.to(device)
+
+            optimizer.zero_grad()
+            logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
+            loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
+
+            loss_sts.backward()
+            optimizer.step()
+
+            average_loss += loss_sts.item()
+            
+            #For each batch, compute average of all losses
+            train_loss += average_loss / 3
+            num_batches += 1
 
         train_loss = train_loss / (num_batches)
+        paraphrase_accuracy, _, _, sentiment_accuracy, _, _, sts_corr, _, _= model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
+        dev_paraphrase_accuracy, _, _, dev_sentiment_accuracy, _, _, dev_sts_corr, _, _ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
 
-        train_acc, train_f1, *_ = model_eval_multitask(sst_train_dataloader, para_train_dataloader, sts_train_dataloader, model, device)
-        dev_acc, dev_f1, *_ = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
-
+        train_acc = paraphrase_accuracy+sentiment_accuracy+sts_corr
+        dev_acc  = dev_paraphrase_accuracy+dev_sentiment_accuracy+dev_sts_corr
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
             save_model(model, optimizer, args, config, args.filepath)
@@ -395,6 +389,12 @@ def pretrain_on_domain_data(args):
     pretrain_data = SingleLineDataset(train_data, args)
     pretrain_data_dataloader = DataLoader(pretrain_data, shuffle=True, batch_size=args.batch_size,
                                         collate_fn=pretrain_data.collate_fn)
+    
+    dev_data = load_pretrain_data(args.sst_dev,args.para_dev,args.sts_dev)
+
+    pretrain_dev_data = SingleLineDataset(dev_data, args)
+    pretrain_dev_data_dataloader = DataLoader(pretrain_dev_data, shuffle=False, batch_size=args.batch_size,
+                                        collate_fn=pretrain_dev_data.collate_fn)
 
     # Init model
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
@@ -409,6 +409,7 @@ def pretrain_on_domain_data(args):
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
+    best_dev_acc = 0
 
     for epoch in range(args.epochs):
         model.train()
@@ -435,9 +436,14 @@ def pretrain_on_domain_data(args):
             train_loss += loss.item()
             num_batches += 1
 
+        train_acc = model_eval_pretrain_domain(pretrain_data_dataloader, model, device)
+        dev_acc = model_eval_pretrain_domain(pretrain_dev_data_dataloader, model, device)
+        if dev_acc > best_dev_acc:
+            best_dev_acc = dev_acc
+            save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
+
         train_loss = train_loss / (num_batches)
-        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}")
-        save_model(model, optimizer, args, config, args.pretrained_weights_path + f'pretrained--epoch{epoch}-lr{args.lr}.pt')
+        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
 
 
 def get_args():
