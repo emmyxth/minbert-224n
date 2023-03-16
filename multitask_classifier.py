@@ -217,19 +217,10 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
-        max_len = max(len(sst_train_dataloader), len(para_train_dataloader), len(sts_train_dataloader))
-        if max_len == len(sst_train_dataloader):
-            zip_list = zip(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE), 
-                        cycle(tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)),
-                        cycle(tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)))
-        elif max_len == len(para_train_dataloader):
-            zip_list = zip(cycle(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)), 
+       
+        zip_list = zip(tqdm(cycle(sst_train_dataloader), desc=f'train-{epoch}', disable=TQDM_DISABLE), 
                         tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
-                        cycle(tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)))
-        else:
-             zip_list = zip(cycle(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)), 
-                        cycle(tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)),
-                        tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE))
+                        tqdm(cycle(sts_train_dataloader), desc=f'train-{epoch}', disable=TQDM_DISABLE))
         for batch_sst, batch_para, batch_sts in zip_list: 
             average_loss = 0
             
