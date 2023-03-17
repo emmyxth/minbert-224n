@@ -69,7 +69,10 @@ class MultitaskBERT(nn.Module):
         self.paraphrase_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
         self.paraphrase_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
-        self.similarity_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+        # self.similarity_linear = torch.nn.Linear
+        self.similarity_linear_1 = torch.nn.Linear(BERT_HIDDEN_SIZE, 500)
+        self.similarity_linear_2 = torch.nn.Linear(BERT_HIDDEN_SIZE, 500)
+        self.similarity_linear_cos = torch.nn.Linear(100 * 2, 1)
         self.similarity_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
         self.pretrain_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
@@ -126,8 +129,20 @@ class MultitaskBERT(nn.Module):
         res2 = self.bert(input_ids_2, attention_mask_2)['pooler_output'] # this has cls token hidden state
         res1 = self.similarity_dropout(res1)
         res2 = self.similarity_dropout(res2)
-        res = torch.cat((res1,res2),-1)
-        return self.similarity_linear(res).squeeze(-1)
+        # print("res1 shape", res1.shape, "res2", res2.shape)
+        # res = torch.cat((res1,res2),-1)
+        # return self.similarity_linear(res).squeeze(-1)
+        res1 = self.similarity_linear_1(res1)
+        res2 = self.similarity_linear_2(res2)
+        print("shapes of res after linear transf before cosine", res1.shape)
+        #PERFORMING COSINE SIMILARITY
+        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+        output = cos(res1, res2)
+        print("Output cosine similarity shape", output.shape, "Output cosine similarity", output)
+        output = torch.mul(torch.div(torch.add(output, 1), 2), 5)
+        print("Output cosine similarity after", output)
+        #new_value = ( (old_value - old_min) / (old_max - old_min) ) * (new_max - new_min) + new_min
+        return output
     
     def predict_domain_data(self, input_ids, attention_mask):
         res = self.bert(input_ids, attention_mask)['last_hidden_state'] # this has cls token hidden state
@@ -217,10 +232,19 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
-       
-        zip_list = zip(tqdm(cycle(sst_train_dataloader), desc=f'train-{epoch}', disable=TQDM_DISABLE), 
+        max_len = max(len(sst_train_dataloader), len(para_train_dataloader), len(sts_train_dataloader))
+        if max_len == len(sst_train_dataloader):
+            zip_list = zip(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE), 
+                        cycle(tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)),
+                        cycle(tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)))
+        elif max_len == len(para_train_dataloader):
+            zip_list = zip(cycle(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)), 
                         tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE),
-                        tqdm(cycle(sts_train_dataloader), desc=f'train-{epoch}', disable=TQDM_DISABLE))
+                        cycle(tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)))
+        else:
+             zip_list = zip(cycle(tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)), 
+                        cycle(tqdm(para_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)),
+                        tqdm(sts_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE))
         for batch_sst, batch_para, batch_sts in zip_list: 
             average_loss = 0
             
@@ -278,7 +302,11 @@ def train_multitask(args):
 
             optimizer.zero_grad()
             logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
+            print("b_labels_sts", b_labels_sts)
             loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
+            print("loss sts", loss_sts)
+            # print("LOGITS SIMILARITY", logits_sts, "b_labels_sts", b_labels_sts)
+            # loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
 
             loss_sts.backward()
             optimizer.step()
