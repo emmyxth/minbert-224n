@@ -205,7 +205,7 @@ def train_multitask(args):
     model = model.to(device)
     if args.pretrained_weights_path:
         saved = torch.load(args.pretrained_weights_path)
-        model.load_state_dict(saved['model'])
+        model.load_state_dict(saved['model'],  strict=False)
 
     lr = args.lr
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -232,12 +232,12 @@ def train_multitask(args):
             b_mask_sst = b_mask_sst.to(device)
             b_labels_sst = b_labels_sst.to(device)
 
-            optimizer.zero_grad()
+            # optimizer.zero_grad()
             logits_sst = model.predict_sentiment(b_ids_sst, b_mask_sst)
             loss_sst = F.cross_entropy(logits_sst, b_labels_sst.view(-1), reduction='sum') / args.batch_size
 
-            loss_sst.backward()
-            optimizer.step()
+            # loss_sst.backward()
+            # optimizer.step()
 
             average_loss += loss_sst.item()
             
@@ -254,12 +254,12 @@ def train_multitask(args):
             b_mask2_para = b_mask2_para.to(device)
             b_labels_para = b_labels_para.to(device)
 
-            optimizer.zero_grad()
+            # optimizer.zero_grad()
             logits_para = model.predict_paraphrase(b_ids1_para, b_mask1_para, b_ids2_para, b_mask2_para)
             loss_para = F.binary_cross_entropy(logits_para.sigmoid().view(-1), b_labels_para.view(-1).float(), reduction='mean')
             
-            loss_para.backward()
-            optimizer.step()
+            # loss_para.backward()
+            # optimizer.step()
 
             average_loss += loss_para.item()
 
@@ -278,10 +278,15 @@ def train_multitask(args):
 
             optimizer.zero_grad()
             logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
+            # loss_sts = torch.nn.CosineEmbeddingLoss(logits_sts, b_labels_sts.float(),)
+            # loss_sts = torch.nn.CosineSimilarity()
             loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
 
-            loss_sts.backward()
-            optimizer.step()
+            # loss_sts.backward()
+            # optimizer.step()
+            losses = [loss_sst, loss_para, loss_sts]
+            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
+            optimizer.step()  # apply gradient step
 
             average_loss += loss_sts.item()
             
