@@ -70,6 +70,7 @@ class MultitaskBERT(nn.Module):
         self.paraphrase_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
         self.similarity_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+        self.similarity_linear_2 = torch.nn.Linear(BERT_HIDDEN_SIZE, 1)
         self.similarity_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
         self.pretrain_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
@@ -238,7 +239,7 @@ def train_multitask(args):
 
             # loss_sst.backward()
             # optimizer.step()
-
+            #print("Sentiment loss", loss_sst.item())
             average_loss += loss_sst.item()
             
             #PARAPHRASING
@@ -260,7 +261,7 @@ def train_multitask(args):
             
             # loss_para.backward()
             # optimizer.step()
-
+            #print("Paraphrase loss", loss_para.item())
             average_loss += loss_para.item()
 
             #SIMILARITY
@@ -280,14 +281,14 @@ def train_multitask(args):
             logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
             # loss_sts = torch.nn.CosineEmbeddingLoss(logits_sts, b_labels_sts.float(),)
             # loss_sts = torch.nn.CosineSimilarity()
-            loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
-
+            loss_sts = F.mse_loss(logits_sts, b_labels_sts.float()) / 5
+            #print("Similarity loss", loss_sts.item())
             # loss_sts.backward()
             # optimizer.step()
             losses = [loss_sst, loss_para, loss_sts]
-            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
+            #optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
             optimizer.step()  # apply gradient step
-
+            
             average_loss += loss_sts.item()
             
             #For each batch, compute average of all losses
@@ -417,7 +418,7 @@ def pretrain(args):
             train_loss += average_loss/2
 
             losses = [loss1, loss2]
-            optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
+            #optimizer.pc_backward(losses) # calculate the gradient can apply gradient modification
             optimizer.step()  # apply gradient step
 
         domain_train_acc = model_eval_pretrain_domain(domain_data_dataloader, model, device)
