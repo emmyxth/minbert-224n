@@ -66,7 +66,8 @@ class MultitaskBERT(nn.Module):
         self.sentiment_linear = torch.nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
         self.sentiment_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
-        self.paraphrase_linear = torch.nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+        self.paraphrase_linear_1 = torch.nn.Linear(BERT_HIDDEN_SIZE, 500)
+        self.paraphrase_linear_2 = torch.nn.Linear(BERT_HIDDEN_SIZE, 500)
         self.paraphrase_dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
         # self.similarity_linear = torch.nn.Linear
@@ -114,8 +115,14 @@ class MultitaskBERT(nn.Module):
         res2 = self.bert(input_ids_2, attention_mask_2)['pooler_output'] # this has cls token hidden state
         res1 = self.paraphrase_dropout(res1)
         res2 = self.paraphrase_dropout(res2)
-        res = torch.cat((res1,res2),-1)
-        return self.paraphrase_linear(res)
+        res1 = self.paraphrase_linear_1(res1)
+        res2 = self.paraphrase_linear_2(res2)
+        #COSINE
+        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+        output = cos(res1, res2)
+        print("Cosine output", output)
+        # output = (torch.div(torch.add(output, 1), 2))
+        return output
 
     def predict_similarity(self,
                            input_ids_1, attention_mask_1,
@@ -129,19 +136,12 @@ class MultitaskBERT(nn.Module):
         res2 = self.bert(input_ids_2, attention_mask_2)['pooler_output'] # this has cls token hidden state
         res1 = self.similarity_dropout(res1)
         res2 = self.similarity_dropout(res2)
-        # print("res1 shape", res1.shape, "res2", res2.shape)
-        # res = torch.cat((res1,res2),-1)
-        # return self.similarity_linear(res).squeeze(-1)
         res1 = self.similarity_linear_1(res1)
         res2 = self.similarity_linear_2(res2)
-        print("shapes of res after linear transf before cosine", res1.shape)
         #PERFORMING COSINE SIMILARITY
         cos = nn.CosineSimilarity(dim=1, eps=1e-6)
         output = cos(res1, res2)
-        print("Output cosine similarity shape", output.shape, "Output cosine similarity", output)
         output = torch.mul(torch.div(torch.add(output, 1), 2), 5)
-        print("Output cosine similarity after", output)
-        #new_value = ( (old_value - old_min) / (old_max - old_min) ) * (new_max - new_min) + new_min
         return output
     
     def predict_domain_data(self, input_ids, attention_mask):
@@ -280,6 +280,7 @@ def train_multitask(args):
 
             optimizer.zero_grad()
             logits_para = model.predict_paraphrase(b_ids1_para, b_mask1_para, b_ids2_para, b_mask2_para)
+            #print("B labels para", b_labels_para, "logits para", logits_para.sigmoid().round())
             loss_para = F.binary_cross_entropy(logits_para.sigmoid().view(-1), b_labels_para.view(-1).float(), reduction='mean')
             
             loss_para.backward()
@@ -302,9 +303,9 @@ def train_multitask(args):
 
             optimizer.zero_grad()
             logits_sts = model.predict_similarity(b_ids1_sts, b_mask1_sts, b_ids2_sts, b_mask2_sts)
-            print("b_labels_sts", b_labels_sts)
+            #print("b_labels_sts", b_labels_sts)
             loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
-            print("loss sts", loss_sts)
+            #print("loss sts", loss_sts)
             # print("LOGITS SIMILARITY", logits_sts, "b_labels_sts", b_labels_sts)
             # loss_sts = F.mse_loss(logits_sts, b_labels_sts.float())
 
